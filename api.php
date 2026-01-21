@@ -455,7 +455,7 @@ function handleCreateServer() {
     $stmt->execute([$ownerId]);
     $owner = $stmt->fetch();
     
-    if (!$owner || $owner['role'] === 'admin') {
+    if (!$owner) {
         throw new Exception('Invalid owner selected');
     }
     
