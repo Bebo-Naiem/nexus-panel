@@ -1,8 +1,8 @@
 #!/bin/bash
 
 # Nexus Panel Production Auto-Installer & Startup Script for Ubuntu 24.04
-# Production-focused installer that sets up Nginx + PHP-FPM + Docker
-# Usage: ./startup.sh [install|nginx|auto]
+# Fully automated installer that sets up Nginx + PHP-FPM + Docker
+# Simply run ./startup.sh to install and start automatically
 
 set -euo pipefail
 
@@ -35,7 +35,8 @@ echo -e "${NC}"
 # Function to display usage
 show_usage() {
     echo "Usage: $0 [option]"
-    echo "Production Options:"
+    echo "Automated Options:"
+    echo "  (no args)     - Automatic install + nginx setup (default)"
     echo "  install       - Install dependencies and setup panel"
     echo "  nginx         - Configure and start with Nginx (recommended)"
     echo "  auto          - Automatic install + nginx setup (recommended)"
@@ -343,42 +344,48 @@ automatic_install() {
 }
 
 # Main script logic
-case "${1:-help}" in
-    "install")
-        check_root
-        check_git
-        check_php
-        check_docker
-        install_dependencies
-        clone_repository
-        setup_database
-        set_permissions
-        echo -e "${GREEN}Installation completed! Run './startup.sh nginx' to start with Nginx.${NC}"
-        ;;
-    "start")
-        echo -e "${RED}Development server mode has been removed${NC}"
-        echo -e "${YELLOW}Use 'nginx' option instead for production setup${NC}"
-        exit 1
-        ;;
-    "nginx")
-        if [ ! -f "index.php" ]; then
-            if [ -d "nexus-panel" ]; then
-                cd nexus-panel
-            else
-                echo -e "${RED}Nexus Panel directory not found${NC}"
-                exit 1
+if [ $# -eq 0 ]; then
+    # No arguments provided, run automatic installation by default
+    echo -e "${BLUE}No arguments provided. Running automatic installation and setup...${NC}"
+    automatic_install
+else
+    case "${1:-help}" in
+        "install")
+            check_root
+            check_git
+            check_php
+            check_docker
+            install_dependencies
+            clone_repository
+            setup_database
+            set_permissions
+            echo -e "${GREEN}Installation completed! Run './startup.sh nginx' to start with Nginx.${NC}"
+            ;;
+        "start")
+            echo -e "${RED}Development server mode has been removed${NC}"
+            echo -e "${YELLOW}Use 'nginx' option instead for production setup${NC}"
+            exit 1
+            ;;
+        "nginx")
+            if [ ! -f "index.php" ]; then
+                if [ -d "nexus-panel" ]; then
+                    cd nexus-panel
+                else
+                    echo -e "${RED}Nexus Panel directory not found${NC}"
+                    exit 1
+                fi
             fi
-        fi
-        start_with_nginx
-        ;;
-    "auto")
-        automatic_install
-        ;;
-    "help"|"-h"|"--help")
-        show_usage
-        ;;
-    *)
-        echo -e "${RED}Invalid option: $1${NC}"
-        show_usage
-        ;;
-esac
+            start_with_nginx
+            ;;
+        "auto")
+            automatic_install
+            ;;
+        "help"|"-h"|"--help")
+            show_usage
+            ;;
+        *)
+            echo -e "${RED}Invalid option: $1${NC}"
+            show_usage
+            ;;
+    esac
+fi
