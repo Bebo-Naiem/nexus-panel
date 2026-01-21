@@ -15,6 +15,32 @@ class EmailManager {
         $this->loadSmtpConfig();
     }
     
+    /**
+     * Get available crypto methods for debugging purposes
+     */
+    private function getAvailableCryptoMethods() {
+        $methods = [];
+        if (defined('STREAM_CRYPTO_METHOD_TLS_CLIENT')) {
+            $methods[] = STREAM_CRYPTO_METHOD_TLS_CLIENT;
+        }
+        if (defined('STREAM_CRYPTO_METHOD_TLSv1_2_CLIENT')) {
+            $methods[] = STREAM_CRYPTO_METHOD_TLSv1_2_CLIENT;
+        }
+        if (defined('STREAM_CRYPTO_METHOD_TLSv1_1_CLIENT')) {
+            $methods[] = STREAM_CRYPTO_METHOD_TLSv1_1_CLIENT;
+        }
+        if (defined('STREAM_CRYPTO_METHOD_TLSv1_0_CLIENT')) {
+            $methods[] = STREAM_CRYPTO_METHOD_TLSv1_0_CLIENT;
+        }
+        if (defined('STREAM_CRYPTO_METHOD_SSLv23_CLIENT')) {
+            $methods[] = STREAM_CRYPTO_METHOD_SSLv23_CLIENT;
+        }
+        if (defined('STREAM_CRYPTO_METHOD_ANY_CLIENT')) {
+            $methods[] = STREAM_CRYPTO_METHOD_ANY_CLIENT;
+        }
+        return $methods;
+    }
+    
     private function loadSmtpConfig() {
         $stmt = $this->pdo->query("SELECT * FROM email_config WHERE is_active = 1 LIMIT 1");
         $this->smtpConfig = $stmt->fetch();
@@ -114,10 +140,38 @@ class EmailManager {
                 fputs($socket, "STARTTLS\r\n");
                 $response = fgets($socket, 1024);
                 
-                // Upgrade connection to TLS
-                if (!stream_socket_enable_crypto($socket, true, STREAM_CRYPTO_METHOD_TLS_CLIENT)) {
+                // Verify STARTTLS was accepted
+                if (strpos($response, '220') === false) {
                     fclose($socket);
-                    throw new Exception('Failed to enable TLS encryption');
+                    throw new Exception('STARTTLS command not accepted by server: ' . $response);
+                }
+                
+                // Give a brief moment for server to prepare for TLS negotiation
+                usleep(500000); // 0.5 second delay
+                
+                // Upgrade connection to TLS with multiple fallbacks
+                $crypto_enabled = false;
+                
+                // Try various crypto methods in order of preference
+                $crypto_methods = [
+                    STREAM_CRYPTO_METHOD_TLS_CLIENT,
+                    STREAM_CRYPTO_METHOD_TLSv1_2_CLIENT,
+                    STREAM_CRYPTO_METHOD_TLSv1_1_CLIENT,
+                    STREAM_CRYPTO_METHOD_TLSv1_0_CLIENT,
+                    STREAM_CRYPTO_METHOD_SSLv23_CLIENT,
+                    STREAM_CRYPTO_METHOD_ANY_CLIENT
+                ];
+                
+                foreach ($crypto_methods as $method) {
+                    if (@stream_socket_enable_crypto($socket, true, $method)) {
+                        $crypto_enabled = true;
+                        break;
+                    }
+                }
+                
+                if (!$crypto_enabled) {
+                    fclose($socket);
+                    throw new Exception('Failed to enable TLS encryption: All TLS/SSL protocol versions failed');
                 }
                 
                 // Re-send EHLO after TLS upgrade
@@ -271,10 +325,38 @@ class EmailManager {
                 fputs($socket, "STARTTLS\r\n");
                 $response = fgets($socket, 1024);
                 
-                // Upgrade connection to TLS
-                if (!stream_socket_enable_crypto($socket, true, STREAM_CRYPTO_METHOD_TLS_CLIENT)) {
+                // Verify STARTTLS was accepted
+                if (strpos($response, '220') === false) {
                     fclose($socket);
-                    return ['success' => false, 'error' => 'Failed to enable TLS encryption'];
+                    return ['success' => false, 'error' => 'STARTTLS command not accepted by server: ' . $response];
+                }
+                
+                // Give a brief moment for server to prepare for TLS negotiation
+                usleep(500000); // 0.5 second delay
+                
+                // Upgrade connection to TLS with multiple fallbacks
+                $crypto_enabled = false;
+                
+                // Try various crypto methods in order of preference
+                $crypto_methods = [
+                    STREAM_CRYPTO_METHOD_TLS_CLIENT,
+                    STREAM_CRYPTO_METHOD_TLSv1_2_CLIENT,
+                    STREAM_CRYPTO_METHOD_TLSv1_1_CLIENT,
+                    STREAM_CRYPTO_METHOD_TLSv1_0_CLIENT,
+                    STREAM_CRYPTO_METHOD_SSLv23_CLIENT,
+                    STREAM_CRYPTO_METHOD_ANY_CLIENT
+                ];
+                
+                foreach ($crypto_methods as $method) {
+                    if (@stream_socket_enable_crypto($socket, true, $method)) {
+                        $crypto_enabled = true;
+                        break;
+                    }
+                }
+                
+                if (!$crypto_enabled) {
+                    fclose($socket);
+                    return ['success' => false, 'error' => 'Failed to enable TLS encryption: All TLS/SSL protocol versions failed'];
                 }
                 
                 // Re-send EHLO after TLS upgrade
