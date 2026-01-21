@@ -191,33 +191,33 @@ async function loadStats(containerId) {
                 <div>
                     <div class="flex justify-between text-sm mb-1">
                         <span class="text-slate-400">CPU Usage</span>
-                        <span class="font-medium">\${stats.cpu_percent}</span>
+                        <span class="font-medium">${stats.cpu_percent}</span>
                     </div>
                     <div class="w-full bg-slate-700 rounded-full h-2">
-                        <div class="bg-green-500 h-2 rounded-full" style="width: \${parseFloat(stats.cpu_percent) || 0}%"></div>
+                        <div class="bg-green-500 h-2 rounded-full" style="width: ${parseFloat(stats.cpu_percent) || 0}%"></div>
                     </div>
                 </div>
                 
                 <div>
                     <div class="flex justify-between text-sm mb-1">
                         <span class="text-slate-400">Memory Usage</span>
-                        <span class="font-medium">\${stats.memory_usage.split(' ')[0]}</span>
+                        <span class="font-medium">${stats.memory_usage.split(' ')[0]}</span>
                     </div>
                     <div class="w-full bg-slate-700 rounded-full h-2">
-                        <div class="bg-blue-500 h-2 rounded-full" style="width: \${Math.min(100, parseFloat(stats.memory_usage.split('/')[0].replace('MiB', '').replace('GiB', '')) * 100 / 1024) || 0}%"></div>
+                        <div class="bg-blue-500 h-2 rounded-full" style="width: ${Math.min(100, parseFloat(stats.memory_usage.split('/')[0].replace('MiB', '').replace('GiB', '')) * 100 / 1024) || 0}%"></div>
                     </div>
                 </div>
                 
                 <div class="grid grid-cols-2 gap-4 pt-4 border-t border-slate-700">
                     <div class="text-center">
                         <div class="text-2xl font-bold text-primary">
-                            \${stats.network_io.split(' ')[0]}
+                            ${stats.network_io.split(' ')[0]}
                         </div>
                         <div class="text-xs text-slate-400">Network</div>
                     </div>
                     <div class="text-center">
                         <div class="text-2xl font-bold text-secondary">
-                            \${stats.block_io.split(' ')[0]}
+                            ${stats.block_io.split(' ')[0]}
                         </div>
                         <div class="text-xs text-slate-400">Block I/O</div>
                     </div>
