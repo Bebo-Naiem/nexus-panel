@@ -235,12 +235,11 @@ async function loadUsers() {
             select.innerHTML = '<option value="">Select Owner...</option>';
             
             usersCache.forEach(user => {
-                if (user.role !== 'admin') {
-                    const option = document.createElement('option');
-                    option.value = user.id;
-                    option.textContent = `${user.username} (${user.email})`;
-                    select.appendChild(option);
-                }
+                // Allow assigning to anyone
+                const option = document.createElement('option');
+                option.value = user.id;
+                option.textContent = `${user.username} (${user.email}) ${user.role === 'admin' ? '[Admin]' : ''}`;
+                select.appendChild(option);
             });
         }
     } catch (error) {

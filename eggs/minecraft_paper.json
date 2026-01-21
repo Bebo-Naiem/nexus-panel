@@ -1,0 +1,15 @@
+{
+    "meta": {
+        "name": "Minecraft Paper",
+        "description": "High performance Minecraft server software",
+        "version": "1.20.4",
+        "author": "Nexus Panel"
+    },
+    "features": {
+        "docker_image": "itzg/minecraft-server:latest"
+    },
+    "variables": {
+        "SERVER_NAME": "My Paper Server",
+        "MEMORY": "2G"
+    }
+}
