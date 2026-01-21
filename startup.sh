@@ -39,7 +39,9 @@ git_clone() {
         if [[ $confirm =~ ^[Yy]$ ]]; then
             rm -rf nexus-panel
         else
-            echo -e "${YELLOW}Skipping clone operation${NC}"
+            echo -e "${YELLOW}Changing to existing nexus-panel directory${NC}"
+            cd nexus-panel
+            echo -e "${GREEN}✓ Changed to nexus-panel directory${NC}"
             return 0
         fi
     fi
@@ -83,7 +85,6 @@ start_dev_server() {
 # Function for full setup (clone + start dev server)
 full_setup() {
     git_clone
-    cd nexus-panel
     start_dev_server
 }
 
