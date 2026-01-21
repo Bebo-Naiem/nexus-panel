@@ -306,6 +306,14 @@ server {
 }
 EOF
     
+    # Verify the configuration file is syntactically correct before enabling
+    echo -e "${BLUE}Verifying Nginx configuration syntax...${NC}"
+    if ! nginx -t -c "$NGINX_CONFIG" 2>/dev/null; then
+        echo -e "${RED}✗ Nginx configuration has syntax errors${NC}"
+        nginx -t -c "$NGINX_CONFIG" 2>&1
+        exit 1
+    fi
+    
     # Disable default Nginx site to avoid conflicts
     if [ -f /etc/nginx/sites-enabled/default ]; then
         rm -f /etc/nginx/sites-enabled/default
@@ -329,8 +337,23 @@ EOF
         fi
     fi
     
-    # Test Nginx configuration
-    if nginx -t; then
+    # Check if the document root directory exists and is accessible
+    if [ ! -d "$CURRENT_DIR" ]; then
+        echo -e "${RED}✗ Document root directory does not exist: $CURRENT_DIR${NC}"
+        exit 1
+    fi
+    
+    # Check if index.php exists in the document root
+    if [ ! -f "$CURRENT_DIR/index.php" ]; then
+        echo -e "${RED}✗ index.php not found in document root: $CURRENT_DIR${NC}"
+        exit 1
+    fi
+    
+    # Test Nginx configuration with detailed output
+    echo -e "${BLUE}Testing Nginx configuration...${NC}"
+    if nginx -t 2>&1; then
+        echo -e "${GREEN}✓ Nginx configuration test passed${NC}"
+        
         # Stop nginx if running before enabling new site
         systemctl stop nginx 2>/dev/null || true
         sleep 2  # Give time for nginx to fully stop
@@ -338,21 +361,32 @@ EOF
         # Reload systemd to pick up any changes
         systemctl daemon-reload
         
+        # Check if there are any syntax errors in the default configuration files
+        echo -e "${BLUE}Checking nginx configuration files...${NC}"
+        ls -la /etc/nginx/sites-enabled/
+        cat /etc/nginx/sites-enabled/nexus-panel
+        
         # Start Nginx
+        echo -e "${BLUE}Starting Nginx service...${NC}"
         if systemctl start nginx; then
             echo -e "${GREEN}✓ Nginx configured and started${NC}"
             echo -e "${GREEN}✓ Nexus Panel is now accessible at: http://localhost${NC}"
             echo -e "${YELLOW}Default credentials: admin / admin123${NC}"
         else
             echo -e "${RED}✗ Nginx failed to start${NC}"
-            echo -e "${YELLOW}Check nginx status with: systemctl status nginx${NC}"
-            journalctl -xeu nginx --no-pager | head -n 20
+            echo -e "${YELLOW}Detailed nginx status:${NC}"
+            systemctl status nginx --no-pager
+            echo -e "${YELLOW}Nginx error logs:${NC}"
+            journalctl -xeu nginx --no-pager | tail -n 20
+            echo -e "${YELLOW}Try checking the nginx configuration manually:${NC}"
+            echo "nginx -t"
             exit 1
         fi
     else
         echo -e "${RED}✗ Nginx configuration test failed${NC}"
         echo -e "${YELLOW}Configuration saved to: $NGINX_CONFIG${NC}"
-        nginx -t 2>&1
+        echo -e "${YELLOW}Current configuration:${NC}"
+        cat /etc/nginx/sites-enabled/nexus-panel
         exit 1
     fi
 }
@@ -381,13 +415,40 @@ start_with_nginx() {
     fi
     
     # Ensure Nginx is not running before starting
+    echo -e "${BLUE}Stopping existing Nginx processes...${NC}"
     systemctl stop nginx 2>/dev/null || true
     sleep 2
     
+    # Check if any nginx processes are still running
+    if pgrep nginx >/dev/null 2>&1; then
+        echo -e "${YELLOW}Found remaining nginx processes, killing them...${NC}"
+        pkill -f nginx 2>/dev/null || true
+        sleep 2
+    fi
+    
+    # Verify nginx configuration again before starting
+    echo -e "${BLUE}Final nginx configuration check...${NC}"
+    if ! nginx -t; then
+        echo -e "${RED}✗ Nginx configuration test failed${NC}"
+        nginx -t 2>&1
+        exit 1
+    fi
+    
     # Start Nginx
+    echo -e "${BLUE}Starting Nginx service...${NC}"
     if systemctl start nginx; then
-        systemctl enable nginx
-        echo -e "${GREEN}✓ Nginx started and enabled${NC}"
+        # Wait a bit for nginx to start
+        sleep 2
+        # Check if nginx is actually running
+        if systemctl is-active --quiet nginx; then
+            systemctl enable nginx
+            echo -e "${GREEN}✓ Nginx started and enabled${NC}"
+        else
+            echo -e "${RED}✗ Nginx service failed to start${NC}"
+            echo -e "${YELLOW}Check nginx logs for details:${NC}"
+            journalctl -u nginx --no-pager --lines 20
+            exit 1
+        fi
     else
         echo -e "${RED}✗ Nginx failed to start${NC}"
         echo -e "${YELLOW}Check configuration and logs:${NC}"
