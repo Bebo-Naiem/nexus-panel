@@ -41,25 +41,45 @@ apt-get update -qq
 apt-get install -y -qq \
     git curl unzip \
     nginx \
-    php8.3-fpm php8.3-cli php8.3-sqlite3 php8.3-curl php8.3-mbstring php8.3-xml \
+    php8.3-fpm php8.3-cli php8.3-sqlite3 php8.3-curl php8.3-mbstring php8.3-xml php8.3-zip \
     docker.io docker-compose-v2 \
     net-tools psmisc lsof
 
 # 3. DIRECTORY SETUP
 echo -e "${BLUE}[2/5] Setting up /var/www/nexus-panel...${NC}"
-mkdir -p /var/www
 
-if [ -d "$TARGET_DIR" ]; then
-    # Reset to fresh state to ensure files aren't corrupted
-    cd "$TARGET_DIR"
-    git fetch --all
-    git reset --hard origin/main
-    git pull
+# CLEANUP: User requested to delete files in target directory first
+# We must be careful not to delete the script itself if running from the target directory
+CURRENT_DIR=$(pwd)
+if [[ "$CURRENT_DIR" != "$TARGET_DIR" ]]; then
+    echo -e "${YELLOW}Cleaning target directory ($TARGET_DIR)...${NC}"
+    rm -rf "$TARGET_DIR"
+    mkdir -p "$TARGET_DIR"
 else
-    git clone "$REPO_URL" "$TARGET_DIR"
+    echo -e "${YELLOW}Running from inside target directory. Skipping cleanup to prevent self-deletion.${NC}"
 fi
 
-cd "$TARGET_DIR"
+mkdir -p /var/www
+
+# Check if we are running from a source folder (not target) containing valid files
+if [ -f "./index.php" ] && [ -f "./config.php" ] && [[ "$CURRENT_DIR" != "$TARGET_DIR" ]]; then
+    # We are running from the source folder, so we copy files
+    echo -e "${GREEN}Running from source. Installing to $TARGET_DIR...${NC}"
+    cp -r . "$TARGET_DIR"
+    cd "$TARGET_DIR"
+elif [[ "$CURRENT_DIR" == "$TARGET_DIR" ]]; then
+     # Already in target, just ensure we use what's here
+     echo -e "${GREEN}Using existing files in $TARGET_DIR${NC}"
+else
+    # Fallback to Git if we are not in a valid source or target
+    echo -e "${BLUE}Cloning from GitHub...${NC}"
+    
+    # Ensure dir exists if we just cleaned it
+    if [ ! -d "$TARGET_DIR" ]; then mkdir -p "$TARGET_DIR"; fi
+    
+    git clone "$REPO_URL" "$TARGET_DIR"
+    cd "$TARGET_DIR"
+fi
 
 # Database Init
 if [ -f "test_db.php" ]; then php test_db.php; fi
