@@ -14,6 +14,19 @@ header('Access-Control-Allow-Origin: *');
 header('Access-Control-Allow-Methods: GET, POST, OPTIONS');
 header('Access-Control-Allow-Headers: Content-Type');
 
+// Debug Logging
+function debugLog($message) {
+    file_put_contents(__DIR__ . '/api_debug.log', date('[Y-m-d H:i:s] ') . (is_string($message) ? $message : print_r($message, true)) . "\n", FILE_APPEND);
+}
+
+ini_set('display_errors', 0);
+error_reporting(E_ALL);
+set_error_handler(function($errno, $errstr, $errfile, $errline) {
+    debugLog("PHP ERROR: [$errno] $errstr in $errfile on line $errline");
+});
+
+debugLog("API Call: " . ($_POST['action'] ?? $_GET['action'] ?? 'None'));
+
 // Get action from request
 $action = $_POST['action'] ?? $_GET['action'] ?? '';
 
@@ -63,15 +76,7 @@ $routes = [
     'wings_server_stats' => 'handleWingsServerStats',
     'wings_system_resources' => 'handleWingsSystemResources',
     'check_update' => 'handleCheckUpdate',
-    'perform_update' => 'handlePerformUpdate',
-    
-    // Email Routes
-    'get_smtp_config' => 'handleGetSmtpConfig',
-    'save_smtp_config' => 'handleSaveSmtpConfig',
-    'test_smtp' => 'handleTestSmtp',
-    'list_email_templates' => 'handleListEmailTemplates',
-    'get_email_template' => 'handleGetEmailTemplate',
-    'save_email_template' => 'handleSaveEmailTemplate'
+    'perform_update' => 'handlePerformUpdate'
 ];
 
 if (!isset($routes[$action])) {
@@ -81,9 +86,11 @@ if (!isset($routes[$action])) {
 
 try {
     $result = call_user_func($routes[$action]);
+    debugLog("API Result: SUCCESS");
     echo json_encode($result);
-} catch (Exception $e) {
-    echo json_encode(['error' => $e->getMessage()]);
+} catch (Throwable $e) {
+    debugLog("API ERROR: " . $e->getMessage() . " in " . $e->getFile() . " on line " . $e->getLine());
+    echo json_encode(['error' => $e->getMessage(), 'file' => $e->getFile(), 'line' => $e->getLine()]);
 }
 
 // Authentication functions
