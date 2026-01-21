@@ -1,7 +1,7 @@
 <?php
 /**
- * Nexus Panel - Email Manager
- * Handles SMTP email sending with templates
+ * Nexus Panel - Enhanced Email Manager with TLS Fix
+ * Handles SMTP email sending with improved TLS/SSL support
  */
 
 require_once 'config.php';
@@ -9,36 +9,11 @@ require_once 'config.php';
 class EmailManager {
     private $pdo;
     private $smtpConfig;
+    private $debugMode = true; // Enable for troubleshooting
     
     public function __construct($pdo) {
         $this->pdo = $pdo;
         $this->loadSmtpConfig();
-    }
-    
-    /**
-     * Get available crypto methods for debugging purposes
-     */
-    private function getAvailableCryptoMethods() {
-        $methods = [];
-        if (defined('STREAM_CRYPTO_METHOD_TLS_CLIENT')) {
-            $methods[] = STREAM_CRYPTO_METHOD_TLS_CLIENT;
-        }
-        if (defined('STREAM_CRYPTO_METHOD_TLSv1_2_CLIENT')) {
-            $methods[] = STREAM_CRYPTO_METHOD_TLSv1_2_CLIENT;
-        }
-        if (defined('STREAM_CRYPTO_METHOD_TLSv1_1_CLIENT')) {
-            $methods[] = STREAM_CRYPTO_METHOD_TLSv1_1_CLIENT;
-        }
-        if (defined('STREAM_CRYPTO_METHOD_TLSv1_0_CLIENT')) {
-            $methods[] = STREAM_CRYPTO_METHOD_TLSv1_0_CLIENT;
-        }
-        if (defined('STREAM_CRYPTO_METHOD_SSLv23_CLIENT')) {
-            $methods[] = STREAM_CRYPTO_METHOD_SSLv23_CLIENT;
-        }
-        if (defined('STREAM_CRYPTO_METHOD_ANY_CLIENT')) {
-            $methods[] = STREAM_CRYPTO_METHOD_ANY_CLIENT;
-        }
-        return $methods;
     }
     
     private function loadSmtpConfig() {
@@ -71,7 +46,7 @@ class EmailManager {
     }
     
     /**
-     * Send custom email
+     * Send custom email with improved TLS handling
      */
     public function sendEmail($toEmail, $toName, $subject, $body, $isHtml = true) {
         if (!$this->smtpConfig) {
@@ -79,7 +54,6 @@ class EmailManager {
         }
         
         try {
-            // Create SMTP connection based on configuration
             $smtpHost = $this->smtpConfig['smtp_host'];
             $smtpPort = $this->smtpConfig['smtp_port'];
             $smtpUsername = $this->smtpConfig['smtp_username'];
@@ -88,9 +62,8 @@ class EmailManager {
             $fromEmail = $this->smtpConfig['from_email'];
             $fromName = $this->smtpConfig['from_name'];
             
-            // Build the message
+            // Build message
             $boundary = md5(time());
-            
             $headers = [];
             $headers[] = 'MIME-Version: 1.0';
             $headers[] = "From: \"{$fromName}\" <{$fromEmail}>";
@@ -109,163 +82,308 @@ class EmailManager {
             }
             $message .= "--{$boundary}--";
             
-            // Use fsockopen for SMTP connection
-            $socket = null;
-            $errorNum = 0;
-            $errorStr = '';
+            // Connect based on encryption type
+            $socket = $this->connectToSMTP($smtpHost, $smtpPort, $encryption);
             
-            // Connect with appropriate encryption
-            if ($encryption === 'ssl') {
-                $socket = fsockopen("ssl://{$smtpHost}", $smtpPort, $errorNum, $errorStr, 30);
-            } elseif ($encryption === 'tls') {
-                $socket = fsockopen("tcp://{$smtpHost}", $smtpPort, $errorNum, $errorStr, 30);
-            } else {
-                $socket = fsockopen($smtpHost, $smtpPort, $errorNum, $errorStr, 30);
-            }
+            // Read server greeting
+            $response = $this->readResponse($socket);
+            $this->debugLog("Server greeting: $response");
             
-            if (!$socket) {
-                throw new Exception("Could not connect to SMTP server: {$errorStr} ({$errorNum})");
-            }
+            // Send EHLO
+            $this->sendCommand($socket, "EHLO {$smtpHost}");
+            $response = $this->readResponse($socket);
+            $this->debugLog("EHLO response: $response");
             
-            // Read initial server response
-            $response = fgets($socket, 1024);
-            
-            // Send EHLO command
-            $ehloCommand = $encryption === 'ssl' ? "EHLO {$smtpHost}" : "EHLO {$smtpHost}";
-            fputs($socket, "{$ehloCommand}\r\n");
-            $response = fgets($socket, 1024);
-            
-            // If using TLS, initiate STARTTLS
+            // Handle TLS if needed
             if ($encryption === 'tls') {
-                fputs($socket, "STARTTLS\r\n");
-                $response = fgets($socket, 1024);
-                
-                // Verify STARTTLS was accepted
-                if (strpos($response, '220') === false) {
-                    fclose($socket);
-                    throw new Exception('STARTTLS command not accepted by server: ' . $response);
-                }
-                
-                // Give a brief moment for server to prepare for TLS negotiation
-                usleep(500000); // 0.5 second delay
-                
-                // Upgrade connection to TLS with multiple fallbacks
-                $crypto_enabled = false;
-                
-                // Try various crypto methods in order of preference
-                $crypto_methods = [
-                    STREAM_CRYPTO_METHOD_TLS_CLIENT,
-                    STREAM_CRYPTO_METHOD_TLSv1_2_CLIENT,
-                    STREAM_CRYPTO_METHOD_TLSv1_1_CLIENT,
-                    STREAM_CRYPTO_METHOD_TLSv1_0_CLIENT,
-                    STREAM_CRYPTO_METHOD_SSLv23_CLIENT,
-                    STREAM_CRYPTO_METHOD_ANY_CLIENT
-                ];
-                
-                foreach ($crypto_methods as $method) {
-                    if (@stream_socket_enable_crypto($socket, true, $method)) {
-                        $crypto_enabled = true;
-                        break;
-                    }
-                }
-                
-                if (!$crypto_enabled) {
-                    fclose($socket);
-                    throw new Exception('Failed to enable TLS encryption: All TLS/SSL protocol versions failed');
-                }
-                
-                // Re-send EHLO after TLS upgrade
-                fputs($socket, "EHLO {$smtpHost}\r\n");
-                $response = fgets($socket, 1024);
+                $socket = $this->enableTLS($socket, $smtpHost);
             }
             
-            // Authenticate using AUTH LOGIN
-            fputs($socket, "AUTH LOGIN\r\n");
-            $response = fgets($socket, 1024);
+            // Authenticate
+            $this->authenticate($socket, $smtpUsername, $smtpPassword);
             
-            if (strpos($response, '334') === false) {
-                fclose($socket);
-                throw new Exception('SMTP server did not accept authentication request');
+            // Send email
+            $this->sendCommand($socket, "MAIL FROM: <{$fromEmail}>");
+            $response = $this->readResponse($socket);
+            
+            if (!$this->isSuccessResponse($response)) {
+                throw new Exception('Server rejected sender: ' . $response);
             }
             
-            // Send encoded username
-            fputs($socket, base64_encode($smtpUsername) . "\r\n");
-            $response = fgets($socket, 1024);
+            $this->sendCommand($socket, "RCPT TO: <{$toEmail}>");
+            $response = $this->readResponse($socket);
             
-            if (strpos($response, '334') === false) {
-                fclose($socket);
-                throw new Exception('SMTP server did not accept username');
+            if (!$this->isSuccessResponse($response)) {
+                throw new Exception('Server rejected recipient: ' . $response);
             }
             
-            // Send encoded password
-            fputs($socket, base64_encode($smtpPassword) . "\r\n");
-            $response = fgets($socket, 1024);
-            
-            if (strpos($response, '235') === false) {
-                fclose($socket);
-                throw new Exception('SMTP authentication failed: ' . $response);
-            }
-            
-            // Send MAIL FROM
-            fputs($socket, "MAIL FROM: <{$fromEmail}>\r\n");
-            $response = fgets($socket, 1024);
-            
-            if (strpos($response, '250') === false) {
-                fclose($socket);
-                throw new Exception('SMTP server rejected sender: ' . $response);
-            }
-            
-            // Send RCPT TO
-            fputs($socket, "RCPT TO: <{$toEmail}>\r\n");
-            $response = fgets($socket, 1024);
-            
-            if (strpos($response, '250') === false && strpos($response, '251') === false) {
-                fclose($socket);
-                throw new Exception('SMTP server rejected recipient: ' . $response);
-            }
-            
-            // Send DATA command
-            fputs($socket, "DATA\r\n");
-            $response = fgets($socket, 1024);
+            $this->sendCommand($socket, "DATA");
+            $response = $this->readResponse($socket);
             
             if (strpos($response, '354') === false) {
-                fclose($socket);
-                throw new Exception('SMTP server did not accept data: ' . $response);
+                throw new Exception('Server did not accept DATA: ' . $response);
             }
             
-            // Send headers
+            // Send headers and body
             foreach ($headers as $header) {
                 fputs($socket, "{$header}\r\n");
             }
-            
-            // Send message body
             fputs($socket, "\r\n{$message}\r\n");
-            
-            // End data with .
             fputs($socket, ".\r\n");
-            $response = fgets($socket, 1024);
+            
+            $response = $this->readResponse($socket);
             
             // Close connection
-            fputs($socket, "QUIT\r\n");
+            $this->sendCommand($socket, "QUIT");
             fclose($socket);
             
-            // Check if email was accepted
-            if (strpos($response, '250') === false) {
-                throw new Exception('SMTP server did not accept message: ' . $response);
+            if (!$this->isSuccessResponse($response)) {
+                throw new Exception('Server did not accept message: ' . $response);
             }
             
-            // Log email activity
             $this->logEmail($toEmail, $subject, 'sent');
-            
             return true;
+            
         } catch (Exception $e) {
-            // If SMTP fails, try fallback method
+            $this->logEmail($toEmail, $subject, 'failed', $e->getMessage());
+            
+            // Try fallback
             try {
                 return $this->sendEmailFallback($toEmail, $toName, $subject, $body, $isHtml);
             } catch (Exception $fallbackException) {
-                $this->logEmail($toEmail, $subject, 'failed', $e->getMessage() . ' (fallback failed: ' . $fallbackException->getMessage() . ')');
-                throw new Exception('Email sending failed: ' . $e->getMessage() . ' (and fallback also failed)');
+                throw new Exception('Email sending failed: ' . $e->getMessage());
             }
+        }
+    }
+    
+    /**
+     * Connect to SMTP server with proper encryption handling
+     */
+    private function connectToSMTP($host, $port, $encryption) {
+        $errorNum = 0;
+        $errorStr = '';
+        $timeout = 30;
+        
+        // Create stream context with SSL/TLS options
+        $contextOptions = [
+            'ssl' => [
+                'verify_peer' => false,
+                'verify_peer_name' => false,
+                'allow_self_signed' => true,
+                'crypto_method' => STREAM_CRYPTO_METHOD_TLS_CLIENT | 
+                                 STREAM_CRYPTO_METHOD_TLSv1_2_CLIENT | 
+                                 STREAM_CRYPTO_METHOD_TLSv1_1_CLIENT
+            ]
+        ];
+        
+        $context = stream_context_create($contextOptions);
+        
+        if ($encryption === 'ssl') {
+            // Direct SSL connection
+            $this->debugLog("Connecting via SSL to ssl://{$host}:{$port}");
+            $socket = @stream_socket_client(
+                "ssl://{$host}:{$port}",
+                $errorNum,
+                $errorStr,
+                $timeout,
+                STREAM_CLIENT_CONNECT,
+                $context
+            );
+        } else {
+            // Plain or TLS (STARTTLS)
+            $this->debugLog("Connecting via TCP to {$host}:{$port}");
+            $socket = @stream_socket_client(
+                "tcp://{$host}:{$port}",
+                $errorNum,
+                $errorStr,
+                $timeout,
+                STREAM_CLIENT_CONNECT,
+                $context
+            );
+        }
+        
+        if (!$socket) {
+            throw new Exception("Could not connect to SMTP server: {$errorStr} ({$errorNum})");
+        }
+        
+        // Set timeout for operations
+        stream_set_timeout($socket, $timeout);
+        
+        return $socket;
+    }
+    
+    /**
+     * Enable TLS encryption after STARTTLS command
+     */
+    private function enableTLS($socket, $host) {
+        $this->sendCommand($socket, "STARTTLS");
+        $response = $this->readResponse($socket);
+        
+        if (strpos($response, '220') === false) {
+            throw new Exception('STARTTLS not accepted: ' . $response);
+        }
+        
+        $this->debugLog("STARTTLS accepted, enabling encryption...");
+        
+        // Set stream context for TLS
+        $cryptoMethod = STREAM_CRYPTO_METHOD_TLS_CLIENT | 
+                       STREAM_CRYPTO_METHOD_TLSv1_2_CLIENT | 
+                       STREAM_CRYPTO_METHOD_TLSv1_1_CLIENT;
+        
+        // Try to enable crypto
+        $cryptoEnabled = @stream_socket_enable_crypto($socket, true, $cryptoMethod);
+        
+        if (!$cryptoEnabled) {
+            // Try alternative methods
+            $methods = [
+                STREAM_CRYPTO_METHOD_TLSv1_2_CLIENT,
+                STREAM_CRYPTO_METHOD_TLSv1_1_CLIENT,
+                STREAM_CRYPTO_METHOD_TLS_CLIENT,
+                STREAM_CRYPTO_METHOD_SSLv23_CLIENT
+            ];
+            
+            foreach ($methods as $method) {
+                $this->debugLog("Trying crypto method: " . $this->getCryptoMethodName($method));
+                if (@stream_socket_enable_crypto($socket, true, $method)) {
+                    $cryptoEnabled = true;
+                    $this->debugLog("Successfully enabled with method: " . $this->getCryptoMethodName($method));
+                    break;
+                }
+            }
+        }
+        
+        if (!$cryptoEnabled) {
+            throw new Exception('Failed to enable TLS encryption after STARTTLS');
+        }
+        
+        // Re-send EHLO after TLS
+        $this->sendCommand($socket, "EHLO {$host}");
+        $response = $this->readResponse($socket);
+        $this->debugLog("EHLO after TLS: $response");
+        
+        return $socket;
+    }
+    
+    /**
+     * Authenticate with SMTP server
+     */
+    private function authenticate($socket, $username, $password) {
+        $this->sendCommand($socket, "AUTH LOGIN");
+        $response = $this->readResponse($socket);
+        
+        if (strpos($response, '334') === false) {
+            throw new Exception('AUTH LOGIN not accepted: ' . $response);
+        }
+        
+        // Send username
+        fputs($socket, base64_encode($username) . "\r\n");
+        $response = $this->readResponse($socket);
+        
+        if (strpos($response, '334') === false) {
+            throw new Exception('Username not accepted: ' . $response);
+        }
+        
+        // Send password
+        fputs($socket, base64_encode($password) . "\r\n");
+        $response = $this->readResponse($socket);
+        
+        if (strpos($response, '235') === false) {
+            throw new Exception('Authentication failed: ' . $response);
+        }
+        
+        $this->debugLog("Authentication successful");
+    }
+    
+    /**
+     * Send SMTP command
+     */
+    private function sendCommand($socket, $command) {
+        $this->debugLog(">> $command");
+        fputs($socket, "$command\r\n");
+    }
+    
+    /**
+     * Read SMTP response
+     */
+    private function readResponse($socket) {
+        $response = '';
+        while ($line = fgets($socket, 1024)) {
+            $response .= $line;
+            // Check if this is the last line (starts with code and space, not dash)
+            if (preg_match('/^\d{3} /', $line)) {
+                break;
+            }
+        }
+        
+        $this->debugLog("<< " . trim($response));
+        return trim($response);
+    }
+    
+    /**
+     * Check if response indicates success
+     */
+    private function isSuccessResponse($response) {
+        $code = substr($response, 0, 3);
+        return in_array($code, ['250', '251', '354']);
+    }
+    
+    /**
+     * Get crypto method name for debugging
+     */
+    private function getCryptoMethodName($method) {
+        $names = [
+            STREAM_CRYPTO_METHOD_TLS_CLIENT => 'TLS_CLIENT',
+            STREAM_CRYPTO_METHOD_TLSv1_2_CLIENT => 'TLSv1.2_CLIENT',
+            STREAM_CRYPTO_METHOD_TLSv1_1_CLIENT => 'TLSv1.1_CLIENT',
+            STREAM_CRYPTO_METHOD_SSLv23_CLIENT => 'SSLv23_CLIENT'
+        ];
+        
+        return $names[$method] ?? 'UNKNOWN';
+    }
+    
+    /**
+     * Debug logging
+     */
+    private function debugLog($message) {
+        if ($this->debugMode) {
+            error_log("[EmailManager] $message");
+        }
+    }
+    
+    /**
+     * Test SMTP configuration
+     */
+    public function testConnection() {
+        if (!$this->smtpConfig) {
+            return ['success' => false, 'error' => 'No active SMTP configuration found'];
+        }
+        
+        try {
+            $smtpHost = $this->smtpConfig['smtp_host'];
+            $smtpPort = $this->smtpConfig['smtp_port'];
+            $smtpUsername = $this->smtpConfig['smtp_username'];
+            $smtpPassword = $this->smtpConfig['smtp_password'];
+            $encryption = $this->smtpConfig['smtp_encryption'];
+            
+            $socket = $this->connectToSMTP($smtpHost, $smtpPort, $encryption);
+            $response = $this->readResponse($socket);
+            
+            $this->sendCommand($socket, "EHLO {$smtpHost}");
+            $this->readResponse($socket);
+            
+            if ($encryption === 'tls') {
+                $socket = $this->enableTLS($socket, $smtpHost);
+            }
+            
+            $this->authenticate($socket, $smtpUsername, $smtpPassword);
+            
+            $this->sendCommand($socket, "QUIT");
+            fclose($socket);
+            
+            return ['success' => true, 'message' => 'SMTP connection successful'];
+            
+        } catch (Exception $e) {
+            return ['success' => false, 'error' => 'SMTP test failed: ' . $e->getMessage()];
         }
     }
     
@@ -280,205 +398,14 @@ class EmailManager {
     }
     
     /**
-     * Test SMTP configuration
-     */
-    public function testConnection() {
-        if (!$this->smtpConfig) {
-            return ['success' => false, 'error' => 'No active SMTP configuration found'];
-        }
-        
-        try {
-            // Test basic SMTP connection without sending an actual email
-            $smtpHost = $this->smtpConfig['smtp_host'];
-            $smtpPort = $this->smtpConfig['smtp_port'];
-            $smtpUsername = $this->smtpConfig['smtp_username'];
-            $smtpPassword = $this->smtpConfig['smtp_password'];
-            $encryption = $this->smtpConfig['smtp_encryption'];
-            
-            // Use fsockopen for SMTP connection
-            $socket = null;
-            $errorNum = 0;
-            $errorStr = '';
-            
-            if ($encryption === 'ssl') {
-                $socket = fsockopen("ssl://{$smtpHost}", $smtpPort, $errorNum, $errorStr, 30);
-            } elseif ($encryption === 'tls') {
-                $socket = fsockopen("tcp://{$smtpHost}", $smtpPort, $errorNum, $errorStr, 30);
-            } else {
-                $socket = fsockopen($smtpHost, $smtpPort, $errorNum, $errorStr, 30);
-            }
-            
-            if (!$socket) {
-                return ['success' => false, 'error' => "Could not connect to SMTP server: {$errorStr} ({$errorNum})"];
-            }
-            
-            // Read initial server response
-            $response = fgets($socket, 1024);
-            
-            // Send EHLO command
-            $ehloCommand = $encryption === 'ssl' ? "EHLO {$smtpHost}" : "EHLO {$smtpHost}";
-            fputs($socket, "{$ehloCommand}\r\n");
-            $response = fgets($socket, 1024);
-            
-            // If using TLS, initiate STARTTLS
-            if ($encryption === 'tls') {
-                fputs($socket, "STARTTLS\r\n");
-                $response = fgets($socket, 1024);
-                
-                // Verify STARTTLS was accepted
-                if (strpos($response, '220') === false) {
-                    fclose($socket);
-                    return ['success' => false, 'error' => 'STARTTLS command not accepted by server: ' . $response];
-                }
-                
-                // Give a brief moment for server to prepare for TLS negotiation
-                usleep(500000); // 0.5 second delay
-                
-                // Upgrade connection to TLS with multiple fallbacks
-                $crypto_enabled = false;
-                
-                // Try various crypto methods in order of preference
-                $crypto_methods = [
-                    STREAM_CRYPTO_METHOD_TLS_CLIENT,
-                    STREAM_CRYPTO_METHOD_TLSv1_2_CLIENT,
-                    STREAM_CRYPTO_METHOD_TLSv1_1_CLIENT,
-                    STREAM_CRYPTO_METHOD_TLSv1_0_CLIENT,
-                    STREAM_CRYPTO_METHOD_SSLv23_CLIENT,
-                    STREAM_CRYPTO_METHOD_ANY_CLIENT
-                ];
-                
-                foreach ($crypto_methods as $method) {
-                    if (@stream_socket_enable_crypto($socket, true, $method)) {
-                        $crypto_enabled = true;
-                        break;
-                    }
-                }
-                
-                if (!$crypto_enabled) {
-                    fclose($socket);
-                    return ['success' => false, 'error' => 'Failed to enable TLS encryption: All TLS/SSL protocol versions failed'];
-                }
-                
-                // Re-send EHLO after TLS upgrade
-                fputs($socket, "EHLO {$smtpHost}\r\n");
-                $response = fgets($socket, 1024);
-            }
-            
-            // Authenticate using AUTH LOGIN
-            fputs($socket, "AUTH LOGIN\r\n");
-            $response = fgets($socket, 1024);
-            
-            if (strpos($response, '334') === false) {
-                fclose($socket);
-                return ['success' => false, 'error' => 'SMTP server did not accept authentication request'];
-            }
-            
-            // Send encoded username
-            fputs($socket, base64_encode($smtpUsername) . "\r\n");
-            $response = fgets($socket, 1024);
-            
-            if (strpos($response, '334') === false) {
-                fclose($socket);
-                return ['success' => false, 'error' => 'SMTP server did not accept username'];
-            }
-            
-            // Send encoded password
-            fputs($socket, base64_encode($smtpPassword) . "\r\n");
-            $response = fgets($socket, 1024);
-            
-            if (strpos($response, '235') === false) {
-                fclose($socket);
-                return ['success' => false, 'error' => 'SMTP authentication failed: ' . $response];
-            }
-            
-            // Close connection
-            fputs($socket, "QUIT\r\n");
-            fclose($socket);
-            
-            return ['success' => true, 'message' => 'SMTP connection successful'];
-            
-        } catch (Exception $e) {
-            return ['success' => false, 'error' => 'SMTP connection test failed: ' . $e->getMessage()];
-        }
-    }
-    
-    /**
-     * Get all email templates
-     */
-    public function getTemplates() {
-        $stmt = $this->pdo->query("SELECT * FROM email_templates ORDER BY name ASC");
-        return $stmt->fetchAll();
-    }
-    
-    /**
-     * Get specific template
-     */
-    public function getTemplate($templateName) {
-        $stmt = $this->pdo->prepare("SELECT * FROM email_templates WHERE name = ?");
-        $stmt->execute([$templateName]);
-        return $stmt->fetch();
-    }
-    
-    /**
-     * Create or update template
-     */
-    public function saveTemplate($name, $subject, $body, $isHtml = true, $isActive = true) {
-        $stmt = $this->pdo->prepare(
-            "INSERT OR REPLACE INTO email_templates (name, subject, body, is_html, is_active, updated_at) 
-            VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)"
-        );
-        
-        return $stmt->execute([$name, $subject, $body, $isHtml ? 1 : 0, $isActive ? 1 : 0]);
-    }
-    
-    /**
-     * Get SMTP configuration
-     */
-    public function getSmtpConfig() {
-        return $this->smtpConfig;
-    }
-    
-    /**
-     * Save SMTP configuration
-     */
-    public function saveSmtpConfig($config) {
-        // Deactivate existing configs
-        $this->pdo->query("UPDATE email_config SET is_active = 0");
-        
-        $stmt = $this->pdo->prepare(
-            "INSERT INTO email_config (
-                smtp_host, smtp_port, smtp_username, smtp_password, 
-                smtp_encryption, from_email, from_name, is_active, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, 1, CURRENT_TIMESTAMP)"
-        );
-        
-        $result = $stmt->execute([
-            $config['smtp_host'],
-            $config['smtp_port'],
-            $config['smtp_username'],
-            $config['smtp_password'],
-            $config['smtp_encryption'],
-            $config['from_email'],
-            $config['from_name']
-        ]);
-        
-        if ($result) {
-            $this->loadSmtpConfig(); // Reload config
-        }
-        
-        return $result;
-    }
-    
-    /**
      * Log email activity
      */
     private function logEmail($toEmail, $subject, $status, $error = null) {
-        // In a real implementation, you might want to log emails to a database table
         error_log("Email to $toEmail - Subject: $subject - Status: $status" . ($error ? " - Error: $error" : ""));
     }
     
     /**
-     * Fallback email sending using PHP mail function
+     * Fallback email sending using PHP mail()
      */
     private function sendEmailFallback($toEmail, $toName, $subject, $body, $isHtml = true) {
         $headers = [];
@@ -494,9 +421,7 @@ class EmailManager {
             throw new Exception('Failed to send email using fallback method');
         }
         
-        // Log email activity
         $this->logEmail($toEmail, $subject, 'sent');
-        
         return true;
     }
 }
