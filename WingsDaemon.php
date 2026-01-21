@@ -61,7 +61,7 @@ class WingsDaemon {
             // Start the container
             $result = $this->dockerManager->startContainer($server['container_id']);
             
-            if ($result['success']) {
+            if ($result) {
                 // Update server status
                 $this->updateServerStatus($serverId, 'running');
                 $this->logServerActivity($serverId, 'start', 'Server started successfully');
@@ -87,12 +87,12 @@ class WingsDaemon {
         try {
             $result = $this->dockerManager->stopContainer($server['container_id']);
             
-            if ($result['success']) {
+            if ($result) {
                 $this->updateServerStatus($serverId, 'offline');
                 $this->logServerActivity($serverId, 'stop', 'Server stopped successfully');
                 return ['success' => true, 'message' => 'Server stopped successfully'];
             } else {
-                throw new Exception($result['error']);
+                throw new Exception('Failed to stop container');
             }
         } catch (Exception $e) {
             $this->logServerActivity($serverId, 'stop_failed', 'Failed to stop server: ' . $e->getMessage());
@@ -144,7 +144,7 @@ class WingsDaemon {
                 $this->logServerActivity($serverId, 'kill', 'Server killed forcefully');
                 return ['success' => true, 'message' => 'Server killed successfully'];
             } else {
-                throw new Exception($result['error']);
+                throw new Exception($result['error'] ?? 'Failed to kill container');
             }
         } catch (Exception $e) {
             $this->logServerActivity($serverId, 'kill_failed', 'Failed to kill server: ' . $e->getMessage());
@@ -185,7 +185,7 @@ class WingsDaemon {
                 $this->logServerActivity($serverId, 'command', "Executed command: $command");
                 return ['success' => true, 'message' => 'Command executed successfully'];
             } else {
-                throw new Exception($result['error']);
+                throw new Exception($result['error'] ?? 'Failed to execute command');
             }
         } catch (Exception $e) {
             $this->logServerActivity($serverId, 'command_failed', "Failed to execute command '$command': " . $e->getMessage());

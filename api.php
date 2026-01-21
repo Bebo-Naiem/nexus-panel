@@ -51,7 +51,17 @@ $routes = [
     'import_egg' => 'handleImportEgg',
     'list_egg_files' => 'handleListEggFiles',
     'get_egg_file' => 'handleGetEggFile',
-    'upload_egg_file' => 'handleUploadEggFile'
+    'upload_egg_file' => 'handleUploadEggFile',
+    'wings_list_servers' => 'handleWingsListServers',
+    'wings_server_details' => 'handleWingsServerDetails',
+    'wings_start_server' => 'handleWingsStartServer',
+    'wings_stop_server' => 'handleWingsStopServer',
+    'wings_restart_server' => 'handleWingsRestartServer',
+    'wings_kill_server' => 'handleWingsKillServer',
+    'wings_server_logs' => 'handleWingsServerLogs',
+    'wings_send_command' => 'handleWingsSendCommand',
+    'wings_server_stats' => 'handleWingsServerStats',
+    'wings_system_resources' => 'handleWingsSystemResources'
 ];
 
 if (!isset($routes[$action])) {
@@ -1203,6 +1213,187 @@ function handleUploadEggFile() {
         'filename' => $filename,
         'name' => $parsed['meta']['name']
     ];
+}
+
+// Wings Daemon Functions
+function handleWingsListServers() {
+    global $pdo;
+    
+    if (!isset($_SESSION['user_id'])) {
+        throw new Exception('Authentication required');
+    }
+    
+    require_once 'WingsDaemon.php';
+    $wings = new WingsDaemon($pdo);
+    
+    $servers = $wings->getServers();
+    return ['success' => true, 'servers' => $servers];
+}
+
+function handleWingsServerDetails() {
+    global $pdo;
+    
+    if (!isset($_SESSION['user_id'])) {
+        throw new Exception('Authentication required');
+    }
+    
+    $serverId = $_POST['server_id'] ?? $_GET['server_id'] ?? '';
+    if (empty($serverId)) {
+        throw new Exception('Server ID required');
+    }
+    
+    require_once 'WingsDaemon.php';
+    $wings = new WingsDaemon($pdo);
+    
+    $server = $wings->getServer($serverId);
+    if (!$server) {
+        throw new Exception('Server not found');
+    }
+    
+    return ['success' => true, 'server' => $server];
+}
+
+function handleWingsStartServer() {
+    global $pdo;
+    
+    if (!isset($_SESSION['user_id'])) {
+        throw new Exception('Authentication required');
+    }
+    
+    $serverId = $_POST['server_id'] ?? '';
+    if (empty($serverId)) {
+        throw new Exception('Server ID required');
+    }
+    
+    require_once 'WingsDaemon.php';
+    $wings = new WingsDaemon($pdo);
+    
+    return $wings->startServer($serverId);
+}
+
+function handleWingsStopServer() {
+    global $pdo;
+    
+    if (!isset($_SESSION['user_id'])) {
+        throw new Exception('Authentication required');
+    }
+    
+    $serverId = $_POST['server_id'] ?? '';
+    if (empty($serverId)) {
+        throw new Exception('Server ID required');
+    }
+    
+    require_once 'WingsDaemon.php';
+    $wings = new WingsDaemon($pdo);
+    
+    return $wings->stopServer($serverId);
+}
+
+function handleWingsRestartServer() {
+    global $pdo;
+    
+    if (!isset($_SESSION['user_id'])) {
+        throw new Exception('Authentication required');
+    }
+    
+    $serverId = $_POST['server_id'] ?? '';
+    if (empty($serverId)) {
+        throw new Exception('Server ID required');
+    }
+    
+    require_once 'WingsDaemon.php';
+    $wings = new WingsDaemon($pdo);
+    
+    return $wings->restartServer($serverId);
+}
+
+function handleWingsKillServer() {
+    global $pdo;
+    
+    if (!isset($_SESSION['user_id'])) {
+        throw new Exception('Authentication required');
+    }
+    
+    $serverId = $_POST['server_id'] ?? '';
+    if (empty($serverId)) {
+        throw new Exception('Server ID required');
+    }
+    
+    require_once 'WingsDaemon.php';
+    $wings = new WingsDaemon($pdo);
+    
+    return $wings->killServer($serverId);
+}
+
+function handleWingsServerLogs() {
+    global $pdo;
+    
+    if (!isset($_SESSION['user_id'])) {
+        throw new Exception('Authentication required');
+    }
+    
+    $serverId = $_POST['server_id'] ?? $_GET['server_id'] ?? '';
+    $lines = $_POST['lines'] ?? $_GET['lines'] ?? 100;
+    if (empty($serverId)) {
+        throw new Exception('Server ID required');
+    }
+    
+    require_once 'WingsDaemon.php';
+    $wings = new WingsDaemon($pdo);
+    
+    $logs = $wings->getServerLogs($serverId, (int)$lines);
+    return ['success' => true, 'logs' => $logs];
+}
+
+function handleWingsSendCommand() {
+    global $pdo;
+    
+    if (!isset($_SESSION['user_id'])) {
+        throw new Exception('Authentication required');
+    }
+    
+    $serverId = $_POST['server_id'] ?? '';
+    $command = $_POST['command'] ?? '';
+    if (empty($serverId) || empty($command)) {
+        throw new Exception('Server ID and command required');
+    }
+    
+    require_once 'WingsDaemon.php';
+    $wings = new WingsDaemon($pdo);
+    
+    return $wings->sendCommand($serverId, $command);
+}
+
+function handleWingsServerStats() {
+    global $pdo;
+    
+    if (!isset($_SESSION['user_id'])) {
+        throw new Exception('Authentication required');
+    }
+    
+    $serverId = $_POST['server_id'] ?? '';
+    if (empty($serverId)) {
+        throw new Exception('Server ID required');
+    }
+    
+    require_once 'WingsDaemon.php';
+    $wings = new WingsDaemon($pdo);
+    
+    return $wings->getServerStats($serverId);
+}
+
+function handleWingsSystemResources() {
+    global $pdo;
+    
+    if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'admin') {
+        throw new Exception('Admin access required');
+    }
+    
+    require_once 'WingsDaemon.php';
+    $wings = new WingsDaemon($pdo);
+    
+    $resources = $wings->getSystemResources();
+    return ['success' => true, 'resources' => $resources];
 }
 
 ?>

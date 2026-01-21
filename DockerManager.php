@@ -226,5 +226,31 @@ class DockerManager {
         
         return ['success' => true];
     }
+    
+    /**
+     * Kill a container forcefully
+     */
+    public function killContainer($containerId) {
+        $output = shell_exec("docker kill $containerId 2>&1");
+        
+        if (strpos($output, 'Error') !== false) {
+            return ['success' => false, 'error' => $output];
+        }
+        
+        return ['success' => true];
+    }
+    
+    /**
+     * Execute command in container
+     */
+    public function executeCommand($containerId, $command) {
+        $output = shell_exec("docker exec $containerId $command 2>&1");
+        
+        if (strpos($output, 'Error') !== false) {
+            return ['success' => false, 'error' => $output];
+        }
+        
+        return ['success' => true, 'output' => $output];
+    }
 }
 ?>
