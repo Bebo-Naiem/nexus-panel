@@ -9,14 +9,10 @@ set -euo pipefail
 # Ensure we're in the correct directory
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &> /dev/null && pwd)
 
-# If we're in a directory containing index.php, stay here
-# Otherwise, try to find the project directory
 if [ ! -f "index.php" ]; then
-    # Check if we're in the nexus-panel directory
     if [[ "$SCRIPT_DIR" == */nexus-panel ]]; then
         cd "$SCRIPT_DIR"
     else
-        # Look for the project directory
         if [ -d "$HOME/nexus-panel" ]; then
             cd "$HOME/nexus-panel"
         elif [ -d "$PWD/nexus-panel" ]; then
@@ -35,26 +31,16 @@ if [ ! -f /etc/os-release ] || ! grep -q "Ubuntu" /etc/os-release || ! grep -q "
     if [ -f /etc/os-release ]; then
         echo "Current OS detected:"
         cat /etc/os-release 2>/dev/null | grep -E "^(PRETTY_NAME|=)" | head -2
-    else
-        echo "No /etc/os-release file found - not running on a standard Linux distribution"
     fi
-    echo ""
-    echo "For Ubuntu 24.04 LTS, run this script directly."
-    echo "For other systems, see the documentation for manual setup instructions."
-    echo ""
-    echo "On Windows, use WSL2 with Ubuntu 24.04 LTS:"
-    echo "  1. Install WSL2: wsl --install -d Ubuntu-24.04"
-    echo "  2. Move to WSL filesystem: cd /home/username/nexus-panel"
-    echo "  3. Run: ./startup.sh"
     exit 1
 fi
 
-# Color codes for better output
+# Color codes
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
-NC='\033[0m' # No Color
+NC='\033[0m'
 
 echo -e "${BLUE}========================================="
 echo "    Nexus Panel Auto-Installer & Startup"
@@ -62,74 +48,35 @@ echo "         Ubuntu 24.04 LTS Optimized"
 echo "========================================="
 echo -e "${NC}"
 
-# Function to display usage
 show_usage() {
     echo "Usage: $0 [option]"
-    echo "Automated Options:"
     echo "  (no args)     - Automatic install + nginx setup (default)"
-    echo "  install       - Install dependencies and setup panel"
-    echo "  nginx         - Configure and start with Nginx (recommended)"
-    echo "  auto          - Automatic install + nginx setup (recommended)"
-    echo "  help          - Show this help message"
-    echo ""
-    echo "Note: Development server mode has been removed for production focus"
+    echo "  nginx         - Configure and start with Nginx"
     exit 1
 }
 
-# Function to check if running as root
 check_root() {
-    if [[ $EUID -eq 0 ]]; then
-        echo -e "${YELLOW}Warning: Running as root is not recommended for the web server${NC}"
-        echo -e "${YELLOW}Consider running as a regular user for security${NC}"
+    if [[ $EUID -ne 0 ]]; then
+        echo -e "${YELLOW}Notice: You are not root. You will likely be prompted for sudo password during installation.${NC}"
     fi
 }
 
-# Function to check if git is installed
-check_git() {
-    if ! command -v git &> /dev/null; then
-        echo -e "${RED}Git is not installed. Installing...${NC}"
-        apt update
-        apt install -y git
-    fi
-}
-
-# Function to check if PHP is installed
-check_php() {
-    if ! command -v php &> /dev/null; then
-        echo -e "${RED}PHP is not installed. Installing...${NC}"
-        apt update
-        apt install -y php8.3 php8.3-sqlite3 php8.3-curl php8.3-mbstring php8.3-xml
-    fi
-}
-
-# Function to check if Docker is installed
-check_docker() {
-    if ! command -v docker &> /dev/null; then
-        echo -e "${RED}Docker is not installed. Installing...${NC}"
-        apt update
-        apt install -y docker.io
-        systemctl start docker
-        systemctl enable docker
-    fi
-}
-
-# Function to install dependencies
 install_dependencies() {
     echo -e "${BLUE}Installing required dependencies for Ubuntu 24.04...${NC}"
     
-    # Update package lists
-    apt update
-    
-    # Install packages specific to Ubuntu 24.04
-    # First, make sure Apache is not installed or remove it if it is
-    if dpkg -l | grep -q apache2; then
-        echo -e "${YELLOW}Removing Apache2 to avoid conflicts with Nginx...${NC}"
-        systemctl stop apache2 2>/dev/null || true
-        systemctl disable apache2 2>/dev/null || true
-        apt remove -y apache2 apache2-utils apache2-bin apache2-data 2>/dev/null || true
+    # Aggressively stop and disable Apache if present
+    if command -v apache2 &> /dev/null || dpkg -l | grep -q apache2; then
+        echo -e "${YELLOW}Stopping and removing Apache2 to prevent Port 80 conflicts...${NC}"
+        sudo systemctl stop apache2 2>/dev/null || true
+        sudo systemctl disable apache2 2>/dev/null || true
+        sudo apt remove -y apache2 apache2-utils apache2-bin apache2-data 2>/dev/null || true
+        sudo apt autoremove -y 2>/dev/null || true
     fi
     
-    apt install -y \
+    sudo apt update
+    
+    # Added net-tools (for netstat), psmisc (for fuser), and lsof to prevent startup errors
+    sudo apt install -y \
         git \
         php8.3 \
         php8.3-sqlite3 \
@@ -143,140 +90,123 @@ install_dependencies() {
         ca-certificates \
         curl \
         gnupg \
-        lsb-release
+        lsb-release \
+        net-tools \
+        psmisc \
+        lsof
     
-    # Add Docker's official GPG key if not already added
+    # Add Docker's official GPG key
     if ! [ -e /usr/share/keyrings/docker-archive-keyring.gpg ]; then
-        mkdir -p /etc/apt/keyrings
-        curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker-archive-keyring.gpg
+        sudo mkdir -p /etc/apt/keyrings
+        curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker-archive-keyring.gpg
     fi
     
-    # Add Docker repository
     echo \
       "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu \
-      $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
+      $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
     
-    # Update package lists again
-    apt update
+    sudo apt update
     
-    # Install Docker engine if not already installed
     if ! command -v docker &> /dev/null; then
-        apt install -y docker-ce docker-ce-cli containerd.io
+        sudo apt install -y docker-ce docker-ce-cli containerd.io
     fi
     
-    # Start and enable services
-    systemctl start docker
-    systemctl enable docker
-    systemctl start nginx
-    systemctl enable nginx
-    systemctl start php8.3-fpm
-    systemctl enable php8.3-fpm
+    sudo systemctl start docker
+    sudo systemctl enable docker
+    sudo systemctl start php8.3-fpm
+    sudo systemctl enable php8.3-fpm
     
-    # Add current user to docker group
-    usermod -aG docker $(whoami) 2>/dev/null || true
+    # Ensure current user is in docker group
+    sudo usermod -aG docker $(whoami) 2>/dev/null || true
     
     echo -e "${GREEN}✓ Dependencies installed successfully${NC}"
 }
 
-# Function to clone the repository
 clone_repository() {
     if [ -d "nexus-panel" ]; then
-        echo -e "${YELLOW}Nexus Panel directory already exists${NC}"
-        read -p "Remove existing directory and clone fresh? (y/N): " confirm
-        if [[ $confirm =~ ^[Yy]$ ]]; then
-            rm -rf nexus-panel
-        else
-            echo -e "${YELLOW}Using existing directory${NC}"
-            cd nexus-panel
-            return 0
-        fi
+        echo -e "${YELLOW}Using existing directory${NC}"
+        cd nexus-panel
+        return 0
     fi
     
     echo -e "${BLUE}Cloning Nexus Panel repository...${NC}"
     git clone https://github.com/Bebo-Naiem/nexus-panel.git
     cd nexus-panel
-    
     echo -e "${GREEN}✓ Repository cloned successfully${NC}"
 }
 
-# Function to setup database
 setup_database() {
     echo -e "${BLUE}Setting up database...${NC}"
-    
-    # Make sure we're in the right directory
     if [ ! -f "test_db.php" ]; then
-        echo -e "${RED}Error: Not in Nexus Panel directory${NC}"
-        exit 1
+        echo -e "${YELLOW}Warning: test_db.php not found, skipping specific DB init step.${NC}"
+        return
     fi
-    
-    # Run database setup
     php test_db.php
-    
     echo -e "${GREEN}✓ Database setup completed${NC}"
 }
 
-# Function to set permissions
 set_permissions() {
-    echo -e "${BLUE}Setting file permissions for Ubuntu 24.04...${NC}"
+    echo -e "${BLUE}Setting file permissions...${NC}"
     
-    # Set proper ownership (adjust as needed)
-    chown -R $(whoami):$(whoami) .
+    sudo chown -R $(whoami):$(whoami) .
+    sudo chown -R www-data:www-data . 2>/dev/null || true
     
-    # Ensure www-data can access necessary files for web operation
-    chown -R www-data:www-data . 2>/dev/null || true
-    
-    # Set proper file permissions
     find . -type f -name "*.php" -exec chmod 644 {} \;
     find . -type d -exec chmod 755 {} \;
-    chmod 664 nexus.sqlite 2>/dev/null || touch nexus.sqlite && chmod 664 nexus.sqlite
     
-    # Create necessary directories
-    mkdir -p logs
-    mkdir -p storage
+    # Handle DB file creation if missing
+    if [ ! -f nexus.sqlite ]; then
+        touch nexus.sqlite
+    fi
+    chmod 664 nexus.sqlite
+    sudo chown www-data:www-data nexus.sqlite
+    
+    mkdir -p logs storage
     chmod 755 logs storage
-    chown -R www-data:www-data logs storage 2>/dev/null || true
+    sudo chown -R www-data:www-data logs storage
     
-    # Fix Docker socket permissions for Ubuntu 24.04
-    chmod 666 /var/run/docker.sock 2>/dev/null || true
+    # Fix Docker socket
+    sudo chmod 666 /var/run/docker.sock 2>/dev/null || true
     
     echo -e "${GREEN}✓ Permissions set${NC}"
 }
 
-# Function to configure and start Nginx
 setup_nginx() {
-    echo -e "${BLUE}Configuring Nginx for Ubuntu 24.04...${NC}"
+    echo -e "${BLUE}Configuring Nginx...${NC}"
     
     if [ ! -f "index.php" ]; then
         echo -e "${RED}Error: index.php not found in current directory${NC}"
         exit 1
     fi
     
-    # Get current directory
     CURRENT_DIR=$(pwd)
-    
-    # Create Nginx configuration
     NGINX_CONFIG="/etc/nginx/sites-available/nexus-panel"
     NGINX_LINK="/etc/nginx/sites-enabled/nexus-panel"
     
-    # Backup existing config if it exists
-    if [ -f "$NGINX_CONFIG" ]; then
-        cp "$NGINX_CONFIG" "$NGINX_CONFIG.backup.$(date +%s)"
+    # Verify PHP Socket path for 24.04
+    PHP_SOCKET="/run/php/php8.3-fpm.sock"
+    if [ ! -S "$PHP_SOCKET" ]; then
+        # Try fallback location
+        if [ -S "/var/run/php/php8.3-fpm.sock" ]; then
+            PHP_SOCKET="/var/run/php/php8.3-fpm.sock"
+        else
+            echo -e "${YELLOW}Warning: PHP 8.3 socket not found. Restarting PHP-FPM...${NC}"
+            sudo systemctl restart php8.3-fpm
+            sleep 2
+        fi
     fi
-    
-    # Create Nginx server block optimized for Ubuntu 24.04
-    cat > "$NGINX_CONFIG" << EOF
+
+    sudo bash -c "cat > $NGINX_CONFIG" << EOF
 server {
     listen 80;
     server_name _;
     root $CURRENT_DIR;
     index index.php index.html;
 
-    # Security headers
     add_header X-Frame-Options "SAMEORIGIN" always;
     add_header X-XSS-Protection "1; mode=block" always;
     add_header X-Content-Type-Options "nosniff" always;
 
-    # Ensure the root location serves index.php by default
     location = / {
         try_files /index.php /index.php;
     }
@@ -287,7 +217,7 @@ server {
 
     location ~ \.php$ {
         include snippets/fastcgi-php.conf;
-        fastcgi_pass unix:/var/run/php/php8.3-fpm.sock;
+        fastcgi_pass unix:$PHP_SOCKET;
         fastcgi_param SCRIPT_FILENAME \$document_root\$fastcgi_script_name;
         include fastcgi_params;
         fastcgi_buffer_size 128k;
@@ -299,245 +229,110 @@ server {
         deny all;
     }
     
-    # Deny access to sensitive files
     location ~ \\\.(env|sqlite|log)$ {
         deny all;
     }
 }
 EOF
     
-    # Verify the configuration file is syntactically correct before enabling
-    echo -e "${BLUE}Verifying Nginx configuration syntax...${NC}"
-    if ! nginx -t -c "$NGINX_CONFIG" 2>/dev/null; then
-        echo -e "${RED}✗ Nginx configuration has syntax errors${NC}"
-        nginx -t -c "$NGINX_CONFIG" 2>&1
-        exit 1
-    fi
-    
-    # Disable default Nginx site to avoid conflicts
+    # Remove default configuration
     if [ -f /etc/nginx/sites-enabled/default ]; then
-        rm -f /etc/nginx/sites-enabled/default
-        echo -e "${YELLOW}Disabled default Nginx site to avoid conflicts${NC}"
+        sudo rm -f /etc/nginx/sites-enabled/default
     fi
     
-    # Enable the site
-    ln -sf "$NGINX_CONFIG" "$NGINX_LINK"
+    sudo ln -sf "$NGINX_CONFIG" "$NGINX_LINK"
     
-    # Check if port 80 is available
-    if netstat -tuln | grep -q ':80 '; then
-        echo -e "${YELLOW}Warning: Port 80 is already in use${NC}"
-        netstat -tuln | grep ':80 '
-        echo -e "${YELLOW}Stopping any service on port 80...${NC}"
-        # Try to identify what's using port 80
-        lsof -i :80 2>/dev/null | head -n 10 || true
-        # Kill any process on port 80 if it's not nginx
-        if ! pgrep nginx >/dev/null 2>&1; then
-            sudo fuser -k 80/tcp 2>/dev/null || true
-            sleep 2
+    # AGGRESSIVE PORT 80 CLEANUP
+    echo -e "${BLUE}Ensuring Port 80 is free...${NC}"
+    
+    # 1. Stop Nginx gracefully first
+    sudo systemctl stop nginx 2>/dev/null || true
+    
+    # 2. Check for Apache specifically
+    if pgrep apache2 >/dev/null 2>&1; then
+        echo -e "${YELLOW}Killing lingering Apache processes...${NC}"
+        sudo pkill -f apache2
+    fi
+    
+    # 3. Force kill anything else on port 80
+    if command -v fuser &> /dev/null; then
+        sudo fuser -k 80/tcp 2>/dev/null || true
+    elif command -v lsof &> /dev/null; then
+        # Fallback if fuser fails but lsof exists
+        PID=$(sudo lsof -t -i:80)
+        if [ ! -z "$PID" ]; then
+            sudo kill -9 $PID 2>/dev/null || true
         fi
     fi
     
-    # Check if the document root directory exists and is accessible
-    if [ ! -d "$CURRENT_DIR" ]; then
-        echo -e "${RED}✗ Document root directory does not exist: $CURRENT_DIR${NC}"
-        exit 1
-    fi
+    # Wait for socket release
+    sleep 3
     
-    # Check if index.php exists in the document root
-    if [ ! -f "$CURRENT_DIR/index.php" ]; then
-        echo -e "${RED}✗ index.php not found in document root: $CURRENT_DIR${NC}"
-        exit 1
-    fi
-    
-    # Test Nginx configuration with detailed output
     echo -e "${BLUE}Testing Nginx configuration...${NC}"
-    if nginx -t 2>&1; then
-        echo -e "${GREEN}✓ Nginx configuration test passed${NC}"
+    if sudo nginx -t; then
+        echo -e "${GREEN}✓ Configuration test passed${NC}"
+        sudo systemctl start nginx
         
-        # Stop nginx if running before enabling new site
-        systemctl stop nginx 2>/dev/null || true
-        sleep 2  # Give time for nginx to fully stop
-        
-        # Reload systemd to pick up any changes
-        systemctl daemon-reload
-        
-        # Check if there are any syntax errors in the default configuration files
-        echo -e "${BLUE}Checking nginx configuration files...${NC}"
-        ls -la /etc/nginx/sites-enabled/
-        cat /etc/nginx/sites-enabled/nexus-panel
-        
-        # Start Nginx
-        echo -e "${BLUE}Starting Nginx service...${NC}"
-        if systemctl start nginx; then
-            echo -e "${GREEN}✓ Nginx configured and started${NC}"
-            echo -e "${GREEN}✓ Nexus Panel is now accessible at: http://localhost${NC}"
-            echo -e "${YELLOW}Default credentials: admin / admin123${NC}"
+        # Verify it actually started
+        if systemctl is-active --quiet nginx; then
+             echo -e "${GREEN}✓ Nginx started successfully${NC}"
+             echo -e "${GREEN}=========================================${NC}"
+             echo -e "${GREEN}  NEXUS PANEL IS RUNNING${NC}"
+             echo -e "${YELLOW}  http://${HOSTNAME:-localhost}${NC}"
+             echo -e "${GREEN}=========================================${NC}"
         else
-            echo -e "${RED}✗ Nginx failed to start${NC}"
-            echo -e "${YELLOW}Detailed nginx status:${NC}"
-            systemctl status nginx --no-pager
-            echo -e "${YELLOW}Nginx error logs:${NC}"
-            journalctl -xeu nginx --no-pager | tail -n 20
-            echo -e "${YELLOW}Try checking the nginx configuration manually:${NC}"
-            echo "nginx -t"
-            exit 1
+             echo -e "${RED}✗ Nginx service failed to start despite valid config.${NC}"
+             echo "Checking logs..."
+             sudo journalctl -xeu nginx --no-pager | tail -n 20
+             exit 1
         fi
     else
-        echo -e "${RED}✗ Nginx configuration test failed${NC}"
-        echo -e "${YELLOW}Configuration saved to: $NGINX_CONFIG${NC}"
-        echo -e "${YELLOW}Current configuration:${NC}"
-        cat /etc/nginx/sites-enabled/nexus-panel
+        echo -e "${RED}✗ Nginx configuration failed${NC}"
+        sudo nginx -t
         exit 1
     fi
 }
 
-# Function to start production server
-start_production_server() {
-    echo -e "${RED}Development server mode is disabled${NC}"
-    echo -e "${YELLOW}Use 'nginx' option to start production server${NC}"
-    echo -e "${BLUE}Example: ./startup.sh nginx${NC}"
-    exit 1
-}
-
-# Function to start with Nginx
 start_with_nginx() {
     setup_nginx
-    
-    # Start PHP-FPM if not running
-    if ! systemctl is-active --quiet php8.3-fpm; then
-        systemctl start php8.3-fpm
-        systemctl enable php8.3-fpm
-        echo -e "${GREEN}✓ PHP-FPM started and enabled${NC}"
-    else
-        # Restart PHP-FPM to ensure it's working properly
-        systemctl restart php8.3-fpm
-        echo -e "${GREEN}✓ PHP-FPM restarted${NC}"
-    fi
-    
-    # Ensure Nginx is not running before starting
-    echo -e "${BLUE}Stopping existing Nginx processes...${NC}"
-    systemctl stop nginx 2>/dev/null || true
-    sleep 2
-    
-    # Check if any nginx processes are still running
-    if pgrep nginx >/dev/null 2>&1; then
-        echo -e "${YELLOW}Found remaining nginx processes, killing them...${NC}"
-        pkill -f nginx 2>/dev/null || true
-        sleep 2
-    fi
-    
-    # Verify nginx configuration again before starting
-    echo -e "${BLUE}Final nginx configuration check...${NC}"
-    if ! nginx -t; then
-        echo -e "${RED}✗ Nginx configuration test failed${NC}"
-        nginx -t 2>&1
-        exit 1
-    fi
-    
-    # Start Nginx
-    echo -e "${BLUE}Starting Nginx service...${NC}"
-    if systemctl start nginx; then
-        # Wait a bit for nginx to start
-        sleep 2
-        # Check if nginx is actually running
-        if systemctl is-active --quiet nginx; then
-            systemctl enable nginx
-            echo -e "${GREEN}✓ Nginx started and enabled${NC}"
-        else
-            echo -e "${RED}✗ Nginx service failed to start${NC}"
-            echo -e "${YELLOW}Check nginx logs for details:${NC}"
-            journalctl -u nginx --no-pager --lines 20
-            exit 1
-        fi
-    else
-        echo -e "${RED}✗ Nginx failed to start${NC}"
-        echo -e "${YELLOW}Check configuration and logs:${NC}"
-        nginx -t
-        systemctl status nginx --no-pager
-        journalctl -xeu nginx --no-pager | head -n 20
-        exit 1
-    fi
-    
-    echo -e "${GREEN}=========================================${NC}"
-    echo -e "${GREEN}  NEXUS PANEL IS NOW RUNNING WITH NGINX${NC}"
-    echo -e "${GREEN}  Ubuntu 24.04 LTS Optimized Version${NC}"
-    echo -e "${GREEN}=========================================${NC}"
-    echo -e "${YELLOW}Access the panel at: http://${HOSTNAME:-localhost}${NC}"
-    echo -e "${YELLOW}Default credentials: admin / admin123${NC}"
-    echo -e "${GREEN}Panel configured to run automatically with Nginx${NC}"
-    echo -e "${GREEN}=========================================${NC}"
-    
-    # Final status check for Ubuntu 24.04
-    echo -e "${BLUE}Performing final status check...${NC}"
-    systemctl status nginx php8.3-fpm docker --no-pager
 }
 
-# Function for automatic installation and start
 automatic_install() {
-    echo -e "${BLUE}Starting automatic installation and setup for Ubuntu 24.04...${NC}"
-    
     check_root
-    check_git
-    check_php
-    check_docker
-    
     install_dependencies
     clone_repository
     setup_database
     set_permissions
     
-    # Ensure Docker daemon is running
-    systemctl start docker
-    systemctl enable docker
-    
-    # Add www-data user to docker group for web-based Docker control
-    usermod -aG docker www-data 2>/dev/null || true
+    # Ensure www-data user is in docker group
+    sudo usermod -aG docker www-data 2>/dev/null || true
     
     start_with_nginx
 }
 
 # Main script logic
 if [ $# -eq 0 ]; then
-    # No arguments provided, run automatic installation by default
-    echo -e "${BLUE}No arguments provided. Running automatic installation and setup...${NC}"
     automatic_install
 else
     case "${1:-help}" in
         "install")
             check_root
-            check_git
-            check_php
-            check_docker
             install_dependencies
             clone_repository
             setup_database
             set_permissions
-            echo -e "${GREEN}Installation completed! Run './startup.sh nginx' to start with Nginx.${NC}"
-            ;;
-        "start")
-            echo -e "${RED}Development server mode has been removed${NC}"
-            echo -e "${YELLOW}Use 'nginx' option instead for production setup${NC}"
-            exit 1
+            echo -e "${GREEN}Installation completed! Run './startup.sh nginx' to start.${NC}"
             ;;
         "nginx")
-            if [ ! -f "index.php" ]; then
-                if [ -d "nexus-panel" ]; then
-                    cd nexus-panel
-                else
-                    echo -e "${RED}Nexus Panel directory not found${NC}"
-                    exit 1
-                fi
+            if [ ! -f "index.php" ] && [ -d "nexus-panel" ]; then
+                cd nexus-panel
             fi
             start_with_nginx
             ;;
         "auto")
             automatic_install
             ;;
-        "help"|"-h"|"--help")
-            show_usage
-            ;;
         *)
-            echo -e "${RED}Invalid option: $1${NC}"
             show_usage
             ;;
     esac
