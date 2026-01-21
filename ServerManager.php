@@ -33,8 +33,8 @@ class ServerManager {
         try {
             // Prepare container settings
             $containerName = $this->generateContainerName($userId, $name);
-            $envVars = json_decode($settings['environment'] ?? '{}', true) ?: [];
-            $portMappings = json_decode($settings['ports'] ?? '{}', true) ?: [];
+            $envVars = is_array($settings['environment'] ?? null) ? $settings['environment'] : (json_decode($settings['environment'] ?? '{}', true) ?: []);
+            $portMappings = is_array($settings['ports'] ?? null) ? $settings['ports'] : (json_decode($settings['ports'] ?? '{}', true) ?: []);
             $resources = [
                 'memory' => ($settings['memory'] ?? Config::DEFAULT_MEMORY) . 'm',
                 'cpu' => ($settings['cpu_limit'] ?? Config::DEFAULT_CPU_LIMIT) / 100
