@@ -1,10 +1,23 @@
 #!/bin/bash
 
-# Nexus Panel Auto-Installer & Startup Script
-# Automatically installs dependencies and starts the panel
-# Usage: ./startup.sh [install|start|auto]
+# Nexus Panel Production Auto-Installer & Startup Script for Ubuntu 24.04
+# Production-focused installer that sets up Nginx + PHP-FPM + Docker
+# Usage: ./startup.sh [install|nginx|auto]
 
 set -euo pipefail
+
+# Check if running on Ubuntu 24.04
+if ! grep -q "Ubuntu 24.04" /etc/os-release 2>/dev/null && ! grep -q "24.04" /etc/os-release 2>/dev/null; then
+    echo "Warning: This script is optimized for Ubuntu 24.04 LTS"
+    echo "Current OS info:"
+    cat /etc/os-release 2>/dev/null | head -5 || echo "Unable to detect OS"
+    read -p "Continue anyway? (y/N): " -n 1 -r
+    echo
+    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+        echo "Installation cancelled."
+        exit 1
+    fi
+fi
 
 # Color codes for better output
 RED='\033[0;31m'
@@ -15,18 +28,20 @@ NC='\033[0m' # No Color
 
 echo -e "${BLUE}========================================="
 echo "    Nexus Panel Auto-Installer & Startup"
+echo "         Ubuntu 24.04 LTS Optimized"
 echo "========================================="
 echo -e "${NC}"
 
 # Function to display usage
 show_usage() {
     echo "Usage: $0 [option]"
-    echo "Options:"
+    echo "Production Options:"
     echo "  install       - Install dependencies and setup panel"
-    echo "  start         - Start development server only"
     echo "  nginx         - Configure and start with Nginx (recommended)"
-    echo "  auto          - Automatic install + start (legacy)"
+    echo "  auto          - Automatic install + nginx setup (recommended)"
     echo "  help          - Show this help message"
+    echo ""
+    echo "Note: Development server mode has been removed for production focus"
     exit 1
 }
 
@@ -69,12 +84,12 @@ check_docker() {
 
 # Function to install dependencies
 install_dependencies() {
-    echo -e "${BLUE}Installing required dependencies...${NC}"
+    echo -e "${BLUE}Installing required dependencies for Ubuntu 24.04...${NC}"
     
     # Update package lists
     apt update
     
-    # Install packages
+    # Install packages specific to Ubuntu 24.04
     apt install -y \
         git \
         php8.3 \
@@ -83,11 +98,42 @@ install_dependencies() {
         php8.3-mbstring \
         php8.3-xml \
         docker.io \
-        nginx
+        docker-compose-v2 \
+        nginx \
+        ca-certificates \
+        curl \
+        gnupg \
+        lsb-release
+    
+    # Add Docker's official GPG key if not already added
+    if ! [ -e /usr/share/keyrings/docker-archive-keyring.gpg ]; then
+        mkdir -p /etc/apt/keyrings
+        curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker-archive-keyring.gpg
+    fi
+    
+    # Add Docker repository
+    echo \
+      "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu \
+      $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
+    
+    # Update package lists again
+    apt update
+    
+    # Install Docker engine if not already installed
+    if ! command -v docker &> /dev/null; then
+        apt install -y docker-ce docker-ce-cli containerd.io
+    fi
     
     # Start and enable services
     systemctl start docker
     systemctl enable docker
+    systemctl start nginx
+    systemctl enable nginx
+    systemctl start php8.3-fpm
+    systemctl enable php8.3-fpm
+    
+    # Add current user to docker group
+    usermod -aG docker $(whoami) 2>/dev/null || true
     
     echo -e "${GREEN}✓ Dependencies installed successfully${NC}"
 }
@@ -131,10 +177,13 @@ setup_database() {
 
 # Function to set permissions
 set_permissions() {
-    echo -e "${BLUE}Setting file permissions...${NC}"
+    echo -e "${BLUE}Setting file permissions for Ubuntu 24.04...${NC}"
     
     # Set proper ownership (adjust as needed)
     chown -R $(whoami):$(whoami) .
+    
+    # Ensure www-data can access necessary files for web operation
+    chown -R www-data:www-data . 2>/dev/null || true
     
     # Set proper file permissions
     find . -type f -name "*.php" -exec chmod 644 {} \;
@@ -145,13 +194,17 @@ set_permissions() {
     mkdir -p logs
     mkdir -p storage
     chmod 755 logs storage
+    chown -R www-data:www-data logs storage 2>/dev/null || true
+    
+    # Fix Docker socket permissions for Ubuntu 24.04
+    chmod 666 /var/run/docker.sock 2>/dev/null || true
     
     echo -e "${GREEN}✓ Permissions set${NC}"
 }
 
 # Function to configure and start Nginx
 setup_nginx() {
-    echo -e "${BLUE}Configuring Nginx...${NC}"
+    echo -e "${BLUE}Configuring Nginx for Ubuntu 24.04...${NC}"
     
     if [ ! -f "index.php" ]; then
         echo -e "${RED}Error: index.php not found in current directory${NC}"
@@ -170,13 +223,18 @@ setup_nginx() {
         cp "$NGINX_CONFIG" "$NGINX_CONFIG.backup.$(date +%s)"
     fi
     
-    # Create Nginx server block
+    # Create Nginx server block optimized for Ubuntu 24.04
     cat > "$NGINX_CONFIG" << EOF
 server {
     listen 80;
     server_name _;
     root $CURRENT_DIR;
     index index.php index.html;
+
+    # Security headers
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header X-XSS-Protection "1; mode=block" always;
+    add_header X-Content-Type-Options "nosniff" always;
 
     location / {
         try_files \$uri \$uri/ /index.php?\$query_string;
@@ -187,9 +245,17 @@ server {
         fastcgi_pass unix:/var/run/php/php8.3-fpm.sock;
         fastcgi_param SCRIPT_FILENAME \$document_root\$fastcgi_script_name;
         include fastcgi_params;
+        fastcgi_buffer_size 128k;
+        fastcgi_busy_buffers_size 256k;
+        fastcgi_temp_file_write_size 256k;
     }
 
     location ~ /\. {
+        deny all;
+    }
+    
+    # Deny access to sensitive files
+    location ~ \\.(env|sqlite|log)$ {
         deny all;
     }
 }
@@ -212,55 +278,12 @@ EOF
     fi
 }
 
-# Function to start development server
-start_dev_server() {
-    echo -e "${BLUE}Starting development server...${NC}"
-    
-    if [ ! -f "index.php" ]; then
-        echo -e "${RED}Error: index.php not found in current directory${NC}"
-        exit 1
-    fi
-    
-    # Check if PHP is available
-    if ! command -v php &> /dev/null; then
-        echo -e "${RED}PHP is not installed${NC}"
-        exit 1
-    fi
-    
-    # Check required PHP extensions
-    echo -e "${BLUE}Checking PHP extensions...${NC}"
-    REQUIRED_EXTENSIONS=("pdo_sqlite" "curl" "mbstring" "json")
-    MISSING_EXTENSIONS=()
-    
-    for ext in "${REQUIRED_EXTENSIONS[@]}"; do
-        if ! php -m | grep -q "^$ext$"; then
-            MISSING_EXTENSIONS+=("$ext")
-        fi
-    done
-    
-    if [ ${#MISSING_EXTENSIONS[@]} -gt 0 ]; then
-        echo -e "${RED}✗ Missing PHP extensions: ${MISSING_EXTENSIONS[*]}${NC}"
-        echo -e "${YELLOW}Please install the missing extensions${NC}"
-        exit 1
-    else
-        echo -e "${GREEN}✓ All required PHP extensions are installed${NC}"
-    fi
-    
-    # Get available port (try common ports)
-    PORT=${PORT:-8080}
-    
-    echo -e "${GREEN}✓ Starting development server on port $PORT${NC}"
-    echo -e "${YELLOW}Access the panel at: http://localhost:$PORT${NC}"
-    echo -e "${YELLOW}Default credentials: admin / admin123${NC}"
-    echo -e "${YELLOW}Press Ctrl+C to stop the server${NC}"
-    
-    # Fix session permissions if running as root
-    if [[ $EUID -eq 0 ]]; then
-        mkdir -p /var/lib/php/sessions
-        chmod 777 /var/lib/php/sessions 2>/dev/null || true
-    fi
-    
-    php -S localhost:$PORT
+# Function to start production server
+start_production_server() {
+    echo -e "${RED}Development server mode is disabled${NC}"
+    echo -e "${YELLOW}Use 'nginx' option to start production server${NC}"
+    echo -e "${BLUE}Example: ./startup.sh nginx${NC}"
+    exit 1
 }
 
 # Function to start with Nginx
@@ -283,16 +306,21 @@ start_with_nginx() {
     
     echo -e "${GREEN}=========================================${NC}"
     echo -e "${GREEN}  NEXUS PANEL IS NOW RUNNING WITH NGINX${NC}"
+    echo -e "${GREEN}  Ubuntu 24.04 LTS Optimized Version${NC}"
     echo -e "${GREEN}=========================================${NC}"
     echo -e "${YELLOW}Access the panel at: http://${HOSTNAME:-localhost}${NC}"
     echo -e "${YELLOW}Default credentials: admin / admin123${NC}"
     echo -e "${GREEN}Panel configured to run automatically with Nginx${NC}"
     echo -e "${GREEN}=========================================${NC}"
+    
+    # Final status check for Ubuntu 24.04
+    echo -e "${BLUE}Performing final status check...${NC}"
+    systemctl status nginx php8.3-fpm docker --no-pager
 }
 
 # Function for automatic installation and start
 automatic_install() {
-    echo -e "${BLUE}Starting automatic installation and setup...${NC}"
+    echo -e "${BLUE}Starting automatic installation and setup for Ubuntu 24.04...${NC}"
     
     check_root
     check_git
@@ -303,7 +331,15 @@ automatic_install() {
     clone_repository
     setup_database
     set_permissions
-    start_dev_server
+    
+    # Ensure Docker daemon is running
+    systemctl start docker
+    systemctl enable docker
+    
+    # Add www-data user to docker group for web-based Docker control
+    usermod -aG docker www-data 2>/dev/null || true
+    
+    start_with_nginx
 }
 
 # Main script logic
@@ -320,15 +356,9 @@ case "${1:-help}" in
         echo -e "${GREEN}Installation completed! Run './startup.sh nginx' to start with Nginx.${NC}"
         ;;
     "start")
-        if [ ! -f "index.php" ]; then
-            if [ -d "nexus-panel" ]; then
-                cd nexus-panel
-            else
-                echo -e "${RED}Nexus Panel directory not found${NC}"
-                exit 1
-            fi
-        fi
-        start_dev_server
+        echo -e "${RED}Development server mode has been removed${NC}"
+        echo -e "${YELLOW}Use 'nginx' option instead for production setup${NC}"
+        exit 1
         ;;
     "nginx")
         if [ ! -f "index.php" ]; then
