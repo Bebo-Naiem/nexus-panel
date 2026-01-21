@@ -63,7 +63,7 @@ $routes = [
     'wings_server_stats' => 'handleWingsServerStats',
     'wings_system_resources' => 'handleWingsSystemResources',
     'check_update' => 'handleCheckUpdate',
-    'perform_update' => 'handlePerformUpdate',
+    'perform_update' => 'handlePerformUpdate'/*,
     
     // Email Routes
     'get_smtp_config' => 'handleGetSmtpConfig',
@@ -71,7 +71,7 @@ $routes = [
     'test_smtp' => 'handleTestSmtp',
     'list_email_templates' => 'handleListEmailTemplates',
     'get_email_template' => 'handleGetEmailTemplate',
-    'save_email_template' => 'handleSaveEmailTemplate'
+    'save_email_template' => 'handleSaveEmailTemplate'*/
 ];
 
 if (!isset($routes[$action])) {
