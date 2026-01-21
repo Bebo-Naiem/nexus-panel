@@ -61,7 +61,9 @@ $routes = [
     'wings_server_logs' => 'handleWingsServerLogs',
     'wings_send_command' => 'handleWingsSendCommand',
     'wings_server_stats' => 'handleWingsServerStats',
-    'wings_system_resources' => 'handleWingsSystemResources'
+    'wings_system_resources' => 'handleWingsSystemResources',
+    'check_update' => 'handleCheckUpdate',
+    'perform_update' => 'handlePerformUpdate'
 ];
 
 if (!isset($routes[$action])) {
