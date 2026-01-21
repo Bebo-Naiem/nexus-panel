@@ -1,127 +1,103 @@
 #!/bin/bash
 
 # ==========================================================
-# NEXUS PANEL AUTO-INSTALLER (Ubuntu 24.04)
-# Target Directory: /var/www/nexus-panel
+# NEXUS PANEL REPAIR & INSTALLER (Ubuntu 24.04)
+# Target: /var/www/nexus-panel
+# Fixes: Firewall, Permissions, Port 80 Conflicts, PHP Socket
 # ==========================================================
 
-set -euo pipefail
+set -u
 
-# Configuration
+# --- CONFIGURATION ---
 TARGET_DIR="/var/www/nexus-panel"
 REPO_URL="https://github.com/Bebo-Naiem/nexus-panel.git"
 NGINX_CONF="/etc/nginx/sites-available/nexus-panel"
 PHP_SOCKET="/run/php/php8.3-fpm.sock"
 
-# Colors
+# --- COLORS ---
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m'
 
-# 1. ROOT PRIVILEGE CHECK
+# --- 1. ROOT CHECK ---
 if [[ $EUID -ne 0 ]]; then
-   echo -e "${RED}Error: This script must be run as root.${NC}"
-   echo "Please run: sudo $0"
+   echo -e "${RED}Error: Run as root (sudo ./startup.sh)${NC}"
    exit 1
 fi
 
-echo -e "${BLUE}========================================="
-echo "    Nexus Panel Installer"
-echo "    Target: $TARGET_DIR"
-echo "========================================="
-echo -e "${NC}"
+echo -e "${BLUE}>>> Starting Nexus Panel Installation & Repair...${NC}"
 
-# 2. DEPENDENCY INSTALLATION & APACHE REMOVAL
-echo -e "${BLUE}[1/5] Installing Dependencies...${NC}"
+# --- 2. STOP EVERYTHING ---
+echo -e "${YELLOW}Stopping services to clear conflicts...${NC}"
+systemctl stop nginx 2>/dev/null
+systemctl stop apache2 2>/dev/null
+systemctl stop php8.3-fpm 2>/dev/null
 
-# Kill/Remove Apache to prevent Port 80 conflicts
-if dpkg -l | grep -q apache2; then
-    echo -e "${YELLOW}Removing Apache2 to prevent conflicts...${NC}"
-    systemctl stop apache2 2>/dev/null || true
-    systemctl disable apache2 2>/dev/null || true
-    apt-get purge -y apache2 apache2-utils apache2-bin apache2-data 2>/dev/null || true
-    apt-get autoremove -y 2>/dev/null || true
+# Kill ANY process on Port 80
+if command -v fuser &> /dev/null; then fuser -k 80/tcp 2>/dev/null; fi
+if command -v lsof &> /dev/null; then
+    PID=$(lsof -t -i:80)
+    if [ ! -z "$PID" ]; then kill -9 $PID; fi
 fi
 
+# --- 3. INSTALL DEPENDENCIES ---
+echo -e "${BLUE}Installing Dependencies...${NC}"
 apt-get update -qq
-# Install Nginx, PHP 8.3, Docker, and system tools
-apt-get install -y -qq \
-    git curl wget unzip \
-    nginx \
-    php8.3 php8.3-fpm php8.3-sqlite3 php8.3-curl php8.3-mbstring php8.3-xml \
-    docker.io docker-compose-v2 \
-    net-tools psmisc lsof acl
+apt-get install -y -qq git curl nginx php8.3-fpm php8.3-sqlite3 php8.3-curl php8.3-mbstring php8.3-xml docker.io net-tools ufw
 
-# Enable Services
-systemctl enable docker
-systemctl start docker
-systemctl enable php8.3-fpm
-systemctl start php8.3-fpm
-
-# 3. DIRECTORY SETUP (/var/www/nexus-panel)
-echo -e "${BLUE}[2/5] Setting up Directory...${NC}"
-
-# Ensure parent directory exists
+# --- 4. SETUP DIRECTORY ---
+echo -e "${BLUE}Setting up /var/www/nexus-panel...${NC}"
 mkdir -p /var/www
 
-# Check if target exists
 if [ -d "$TARGET_DIR" ]; then
-    echo -e "${YELLOW}Directory exists. Updating...${NC}"
+    # Backup existing config if exists
+    if [ -f "$TARGET_DIR/.env" ]; then cp "$TARGET_DIR/.env" /tmp/nexus_env_backup; fi
     
-    # If directory is empty, clone. If not, pull.
-    if [ -z "$(ls -A $TARGET_DIR)" ]; then
-        git clone "$REPO_URL" "$TARGET_DIR"
-    else
-        # Navigate and pull
-        cd "$TARGET_DIR"
-        
-        # Check if it is a git repo
-        if [ -d ".git" ]; then
-            git pull || echo -e "${YELLOW}Git pull failed, using existing files...${NC}"
-        else
-            echo -e "${YELLOW}Not a git repo. Proceeding with existing files...${NC}"
-        fi
-    fi
+    # Reset git to force clean state
+    cd "$TARGET_DIR"
+    git fetch --all
+    git reset --hard origin/main
+    git pull
 else
-    echo -e "${YELLOW}Cloning fresh repository...${NC}"
     git clone "$REPO_URL" "$TARGET_DIR"
 fi
 
-# 4. CONFIGURATION & PERMISSIONS
-echo -e "${BLUE}[3/5] Configuring System...${NC}"
 cd "$TARGET_DIR"
 
-# Initialize Database
-if [ -f "test_db.php" ]; then
-    php test_db.php
-fi
+# Database Init
+if [ -f "test_db.php" ]; then php test_db.php; fi
 
-# Set Ownership (www-data needs access)
+# --- 5. PERMISSIONS (CRITICAL) ---
+echo -e "${BLUE}Applying Permissions...${NC}"
 chown -R www-data:www-data "$TARGET_DIR"
 chmod -R 755 "$TARGET_DIR"
-find "$TARGET_DIR" -type f -name "*.php" -exec chmod 644 {} \;
+# Ensure index.php is readable
+chmod 644 "$TARGET_DIR/index.php"
 
-# Specific Write Permissions
+# Storage dirs
 mkdir -p logs storage
-chmod -R 775 logs storage
 chown -R www-data:www-data logs storage
+chmod -R 775 logs storage
 
-if [ -f "nexus.sqlite" ]; then
-    chmod 664 nexus.sqlite
-    chown www-data:www-data nexus.sqlite
+# --- 6. PHP & NGINX CONFIG ---
+echo -e "${BLUE}Configuring Web Server...${NC}"
+
+# Restart PHP to ensure socket exists
+systemctl restart php8.3-fpm
+
+# Check for socket
+if [ ! -S "$PHP_SOCKET" ]; then
+    echo -e "${RED}Error: PHP Socket $PHP_SOCKET not found!${NC}"
+    echo "Attempting to find socket..."
+    PHP_SOCKET=$(find /run/php -name "php*-fpm.sock" | head -n 1)
+    if [ -z "$PHP_SOCKET" ]; then
+        echo -e "${RED}PHP is not running properly. Check 'systemctl status php8.3-fpm'${NC}"
+        exit 1
+    fi
+    echo -e "${YELLOW}Found socket at: $PHP_SOCKET${NC}"
 fi
-
-# Allow www-data to use Docker
-usermod -aG docker www-data
-chmod 666 /var/run/docker.sock 2>/dev/null || true
-
-# 5. NGINX SETUP
-echo -e "${BLUE}[4/5] Generating Nginx Config...${NC}"
-
-# Backup existing config if any
-if [ -f "$NGINX_CONF" ]; then mv "$NGINX_CONF" "$NGINX_CONF.bak"; fi
 
 cat > "$NGINX_CONF" << EOF
 server {
@@ -133,11 +109,6 @@ server {
 
     access_log /var/log/nginx/nexus_access.log;
     error_log /var/log/nginx/nexus_error.log;
-
-    # Security Headers
-    add_header X-Frame-Options "SAMEORIGIN";
-    add_header X-XSS-Protection "1; mode=block";
-    add_header X-Content-Type-Options "nosniff";
 
     location = / {
         try_files /index.php /index.php;
@@ -153,57 +124,54 @@ server {
         fastcgi_param SCRIPT_FILENAME \$document_root\$fastcgi_script_name;
         include fastcgi_params;
     }
-
-    location ~ /\. { deny all; }
-    location ~ \.(env|sqlite|log)$ { deny all; }
 }
 EOF
 
-# Link site and remove default
+# Link Config
 rm -f /etc/nginx/sites-enabled/default
 ln -sf "$NGINX_CONF" /etc/nginx/sites-enabled/nexus-panel
 
-# 6. PORT CLEANUP & STARTUP
-echo -e "${BLUE}[5/5] Starting Server...${NC}"
-
-# Stop Nginx to clear locks
-systemctl stop nginx 2>/dev/null || true
-
-# Kill anything blocking Port 80 (Fixes 'Job failed' error)
-if command -v fuser &> /dev/null; then
-    fuser -k 80/tcp 2>/dev/null || true
+# --- 7. FIREWALL FIX ---
+echo -e "${BLUE}Configuring Firewall (UFW)...${NC}"
+if command -v ufw &> /dev/null; then
+    ufw allow 80/tcp
+    ufw allow 22/tcp
+    # Don't enable if not already enabled to avoid locking user out
+    if ufw status | grep -q "Status: active"; then
+        ufw reload
+    fi
 fi
 
-# Additional check with lsof
-if command -v lsof &> /dev/null; then
-    PID=$(lsof -t -i:80)
-    if [ ! -z "$PID" ]; then kill -9 $PID 2>/dev/null || true; fi
-fi
-
-# Wait a moment for ports to free up
-sleep 2
-
-# Test and Start
+# --- 8. START & VERIFY ---
+echo -e "${BLUE}Starting Nginx...${NC}"
 if nginx -t; then
     systemctl start nginx
-    
-    if systemctl is-active --quiet nginx; then
-        echo -e "${GREEN}=========================================${NC}"
-        echo -e "${GREEN}  INSTALLATION SUCCESSFUL${NC}"
-        echo -e "${GREEN}  Folder: $TARGET_DIR${NC}"
-        echo -e "${GREEN}  URL:    http://${HOSTNAME:-localhost}${NC}"
-        echo -e "${GREEN}=========================================${NC}"
-        
-        # Final Permissions check
-        chown -R www-data:www-data "$TARGET_DIR"
-    else
-        echo -e "${RED}Nginx failed to start.${NC}"
-        echo "Showing recent logs:"
-        journalctl -xeu nginx --no-pager | tail -n 20
-        exit 1
-    fi
+    systemctl enable nginx
 else
-    echo -e "${RED}Nginx Configuration Invalid.${NC}"
+    echo -e "${RED}Nginx Config Error${NC}"
     nginx -t
     exit 1
+fi
+
+sleep 2
+
+# INTERNAL CONNECTION TEST
+echo -e "${BLUE}Testing connection...${NC}"
+HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost)
+
+if [ "$HTTP_CODE" == "200" ] || [ "$HTTP_CODE" == "302" ]; then
+    echo -e "${GREEN}==============================================${NC}"
+    echo -e "${GREEN} SUCCESS! Server is running.${NC}"
+    echo -e "${GREEN} URL: http://${HOSTNAME:-localhost}${NC}"
+    echo -e "${GREEN} Location: $TARGET_DIR${NC}"
+    echo -e "${GREEN}==============================================${NC}"
+else
+    echo -e "${RED}==============================================${NC}"
+    echo -e "${RED} WARNING: Server started, but Localhost returned Code: $HTTP_CODE${NC}"
+    echo -e "${RED}==============================================${NC}"
+    echo -e "${YELLOW}Troubleshooting info:${NC}"
+    echo "1. Nginx Status: $(systemctl is-active nginx)"
+    echo "2. PHP Status: $(systemctl is-active php8.3-fpm)"
+    echo "3. Last Nginx Error Log:"
+    tail -n 5 /var/log/nginx/nexus_error.log 2>/dev/null || echo "No error log found."
 fi
