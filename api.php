@@ -19,11 +19,8 @@ function debugLog($message) {
     file_put_contents(__DIR__ . '/api_debug.log', date('[Y-m-d H:i:s] ') . (is_string($message) ? $message : print_r($message, true)) . "\n", FILE_APPEND);
 }
 
-ini_set('display_errors', 0);
+ini_set('display_errors', 1);
 error_reporting(E_ALL);
-set_error_handler(function($errno, $errstr, $errfile, $errline) {
-    debugLog("PHP ERROR: [$errno] $errstr in $errfile on line $errline");
-});
 
 debugLog("API Call: " . ($_POST['action'] ?? $_GET['action'] ?? 'None'));
 
