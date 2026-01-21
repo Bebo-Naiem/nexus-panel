@@ -6,17 +6,47 @@
 
 set -euo pipefail
 
-# Check if running on Ubuntu 24.04
-if ! grep -q "Ubuntu 24.04" /etc/os-release 2>/dev/null && ! grep -q "24.04" /etc/os-release 2>/dev/null; then
-    echo "Warning: This script is optimized for Ubuntu 24.04 LTS"
-    echo "Current OS info:"
-    cat /etc/os-release 2>/dev/null | head -5 || echo "Unable to detect OS"
-    read -p "Continue anyway? (y/N): " -n 1 -r
-    echo
-    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-        echo "Installation cancelled."
-        exit 1
+# Ensure we're in the correct directory
+SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &> /dev/null && pwd)
+
+# If we're in a directory containing index.php, stay here
+# Otherwise, try to find the project directory
+if [ ! -f "index.php" ]; then
+    # Check if we're in the nexus-panel directory
+    if [[ "$SCRIPT_DIR" == */nexus-panel ]]; then
+        cd "$SCRIPT_DIR"
+    else
+        # Look for the project directory
+        if [ -d "$HOME/nexus-panel" ]; then
+            cd "$HOME/nexus-panel"
+        elif [ -d "$PWD/nexus-panel" ]; then
+            cd "$PWD/nexus-panel"
+        else
+            echo "Error: Cannot find nexus-panel directory"
+            echo "Please run this script from the nexus-panel directory"
+            exit 1
+        fi
     fi
+fi
+
+# Check if running on Ubuntu 24.04
+if [ ! -f /etc/os-release ] || ! grep -q "Ubuntu" /etc/os-release || ! grep -q "24.04" /etc/os-release; then
+    echo "Error: This script is designed specifically for Ubuntu 24.04 LTS"
+    if [ -f /etc/os-release ]; then
+        echo "Current OS detected:"
+        cat /etc/os-release 2>/dev/null | grep -E "^(PRETTY_NAME|=)" | head -2
+    else
+        echo "No /etc/os-release file found - not running on a standard Linux distribution"
+    fi
+    echo ""
+    echo "For Ubuntu 24.04 LTS, run this script directly."
+    echo "For other systems, see the documentation for manual setup instructions."
+    echo ""
+    echo "On Windows, use WSL2 with Ubuntu 24.04 LTS:"
+    echo "  1. Install WSL2: wsl --install -d Ubuntu-24.04"
+    echo "  2. Move to WSL filesystem: cd /home/username/nexus-panel"
+    echo "  3. Run: ./startup.sh"
+    exit 1
 fi
 
 # Color codes for better output
