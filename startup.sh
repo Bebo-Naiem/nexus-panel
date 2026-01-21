@@ -1,9 +1,9 @@
 #!/bin/bash
 
 # ==========================================================
-# NEXUS PANEL REPAIR & INSTALLER (Ubuntu 24.04)
+# NEXUS PANEL - FULL INSTALLER & REPAIR (Ubuntu 24.04)
 # Target: /var/www/nexus-panel
-# Fixes: Firewall, Permissions, Port 80 Conflicts, PHP Socket
+# Fixes: Port 80, Permissions, and "File Download" Issue
 # ==========================================================
 
 set -u
@@ -12,7 +12,6 @@ set -u
 TARGET_DIR="/var/www/nexus-panel"
 REPO_URL="https://github.com/Bebo-Naiem/nexus-panel.git"
 NGINX_CONF="/etc/nginx/sites-available/nexus-panel"
-PHP_SOCKET="/run/php/php8.3-fpm.sock"
 
 # --- COLORS ---
 RED='\033[0;31m'
@@ -21,41 +20,37 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m'
 
-# --- 1. ROOT CHECK ---
+# 1. ROOT CHECK
 if [[ $EUID -ne 0 ]]; then
-   echo -e "${RED}Error: Run as root (sudo ./startup.sh)${NC}"
+   echo -e "${RED}Error: This script must be run as root.${NC}"
+   echo "Run: sudo ./startup.sh"
    exit 1
 fi
 
-echo -e "${BLUE}>>> Starting Nexus Panel Installation & Repair...${NC}"
+echo -e "${BLUE}>>> Starting Nexus Panel Installation...${NC}"
 
-# --- 2. STOP EVERYTHING ---
-echo -e "${YELLOW}Stopping services to clear conflicts...${NC}"
+# 2. CLEANUP & DEPENDENCIES
+echo -e "${BLUE}[1/5] Installing Dependencies...${NC}"
+
+# Stop services to prevent locks
 systemctl stop nginx 2>/dev/null
 systemctl stop apache2 2>/dev/null
-systemctl stop php8.3-fpm 2>/dev/null
 
-# Kill ANY process on Port 80
-if command -v fuser &> /dev/null; then fuser -k 80/tcp 2>/dev/null; fi
-if command -v lsof &> /dev/null; then
-    PID=$(lsof -t -i:80)
-    if [ ! -z "$PID" ]; then kill -9 $PID; fi
-fi
-
-# --- 3. INSTALL DEPENDENCIES ---
-echo -e "${BLUE}Installing Dependencies...${NC}"
+# Install Stack
 apt-get update -qq
-apt-get install -y -qq git curl nginx php8.3-fpm php8.3-sqlite3 php8.3-curl php8.3-mbstring php8.3-xml docker.io net-tools ufw
+apt-get install -y -qq \
+    git curl unzip \
+    nginx \
+    php8.3-fpm php8.3-cli php8.3-sqlite3 php8.3-curl php8.3-mbstring php8.3-xml \
+    docker.io docker-compose-v2 \
+    net-tools psmisc lsof
 
-# --- 4. SETUP DIRECTORY ---
-echo -e "${BLUE}Setting up /var/www/nexus-panel...${NC}"
+# 3. DIRECTORY SETUP
+echo -e "${BLUE}[2/5] Setting up /var/www/nexus-panel...${NC}"
 mkdir -p /var/www
 
 if [ -d "$TARGET_DIR" ]; then
-    # Backup existing config if exists
-    if [ -f "$TARGET_DIR/.env" ]; then cp "$TARGET_DIR/.env" /tmp/nexus_env_backup; fi
-    
-    # Reset git to force clean state
+    # Reset to fresh state to ensure files aren't corrupted
     cd "$TARGET_DIR"
     git fetch --all
     git reset --hard origin/main
@@ -69,36 +64,42 @@ cd "$TARGET_DIR"
 # Database Init
 if [ -f "test_db.php" ]; then php test_db.php; fi
 
-# --- 5. PERMISSIONS (CRITICAL) ---
-echo -e "${BLUE}Applying Permissions...${NC}"
+# 4. PERMISSIONS
+echo -e "${BLUE}[3/5] Fixing Permissions...${NC}"
 chown -R www-data:www-data "$TARGET_DIR"
 chmod -R 755 "$TARGET_DIR"
-# Ensure index.php is readable
+# Ensure index.php specifically is readable
 chmod 644 "$TARGET_DIR/index.php"
 
-# Storage dirs
+# Storage & Logs
 mkdir -p logs storage
 chown -R www-data:www-data logs storage
 chmod -R 775 logs storage
 
-# --- 6. PHP & NGINX CONFIG ---
-echo -e "${BLUE}Configuring Web Server...${NC}"
+# Docker Permissions
+usermod -aG docker www-data
+chmod 666 /var/run/docker.sock 2>/dev/null || true
 
-# Restart PHP to ensure socket exists
-systemctl restart php8.3-fpm
-
-# Check for socket
-if [ ! -S "$PHP_SOCKET" ]; then
-    echo -e "${RED}Error: PHP Socket $PHP_SOCKET not found!${NC}"
-    echo "Attempting to find socket..."
+# 5. PHP SOCKET DETECTION
+# Find the exact socket path to avoid "502 Bad Gateway"
+PHP_SOCKET=$(find /run/php -name "php8.3-fpm.sock" | head -n 1)
+if [ -z "$PHP_SOCKET" ]; then
+    # Fallback search
     PHP_SOCKET=$(find /run/php -name "php*-fpm.sock" | head -n 1)
-    if [ -z "$PHP_SOCKET" ]; then
-        echo -e "${RED}PHP is not running properly. Check 'systemctl status php8.3-fpm'${NC}"
-        exit 1
-    fi
-    echo -e "${YELLOW}Found socket at: $PHP_SOCKET${NC}"
 fi
 
+if [ -z "$PHP_SOCKET" ]; then
+    echo -e "${RED}Error: PHP-FPM socket not found. Reinstalling PHP...${NC}"
+    apt-get install --reinstall -y php8.3-fpm
+    systemctl start php8.3-fpm
+    PHP_SOCKET="/run/php/php8.3-fpm.sock"
+fi
+echo -e "${GREEN}Using PHP Socket: $PHP_SOCKET${NC}"
+
+# 6. NGINX CONFIGURATION (THE FIX FOR DOWNLOADING FILES)
+echo -e "${BLUE}[4/5] configuring Nginx...${NC}"
+
+# We write a manual FastCGI block to ensure variables are passed correctly
 cat > "$NGINX_CONF" << EOF
 server {
     listen 80 default_server;
@@ -110,68 +111,63 @@ server {
     access_log /var/log/nginx/nexus_access.log;
     error_log /var/log/nginx/nexus_error.log;
 
-    location = / {
-        try_files /index.php /index.php;
-    }
-
+    # Root Handler
     location / {
         try_files \$uri \$uri/ /index.php?\$query_string;
     }
 
+    # PHP Handler - THE FIX
     location ~ \.php$ {
-        include snippets/fastcgi-php.conf;
+        # Check if file exists
+        try_files \$uri =404;
+
+        # Split path info
+        fastcgi_split_path_info ^(.+\.php)(/.+)$;
+
+        # Connect to PHP-FPM
         fastcgi_pass unix:$PHP_SOCKET;
-        fastcgi_param SCRIPT_FILENAME \$document_root\$fastcgi_script_name;
+        fastcgi_index index.php;
+
+        # Standard Parameters
         include fastcgi_params;
+        
+        # CRITICAL: Tell PHP exactly where the script is
+        fastcgi_param SCRIPT_FILENAME \$document_root\$fastcgi_script_name;
+        fastcgi_param PATH_INFO \$fastcgi_path_info;
     }
+
+    # Deny hidden files
+    location ~ /\. { deny all; }
 }
 EOF
 
-# Link Config
+# Link site
 rm -f /etc/nginx/sites-enabled/default
 ln -sf "$NGINX_CONF" /etc/nginx/sites-enabled/nexus-panel
 
-# --- 7. FIREWALL FIX ---
-echo -e "${BLUE}Configuring Firewall (UFW)...${NC}"
-if command -v ufw &> /dev/null; then
-    ufw allow 80/tcp
-    ufw allow 22/tcp
-    # Don't enable if not already enabled to avoid locking user out
-    if ufw status | grep -q "Status: active"; then
-        ufw reload
-    fi
-fi
+# 7. STARTUP
+echo -e "${BLUE}[5/5] Starting Services...${NC}"
 
-# --- 8. START & VERIFY ---
-echo -e "${BLUE}Starting Nginx...${NC}"
+# Port Cleanup
+if command -v fuser &> /dev/null; then fuser -k 80/tcp 2>/dev/null; fi
+
+# Restart PHP to ensure fresh config loading
+systemctl restart php8.3-fpm
+
+# Test and Start Nginx
 if nginx -t; then
-    systemctl start nginx
+    systemctl restart nginx
     systemctl enable nginx
+    systemctl enable php8.3-fpm
+    
+    echo -e "${GREEN}==============================================${NC}"
+    echo -e "${GREEN}  INSTALLATION COMPLETE${NC}"
+    echo -e "${GREEN}==============================================${NC}"
+    echo -e "${YELLOW}IMPORTANT:${NC} Open your browser in ${YELLOW}INCOGNITO/PRIVATE MODE${NC}"
+    echo -e "Access Panel at: http://${HOSTNAME:-localhost}"
+    echo -e "${GREEN}==============================================${NC}"
 else
-    echo -e "${RED}Nginx Config Error${NC}"
+    echo -e "${RED}Nginx Config Failed. Showing errors:${NC}"
     nginx -t
     exit 1
-fi
-
-sleep 2
-
-# INTERNAL CONNECTION TEST
-echo -e "${BLUE}Testing connection...${NC}"
-HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost)
-
-if [ "$HTTP_CODE" == "200" ] || [ "$HTTP_CODE" == "302" ]; then
-    echo -e "${GREEN}==============================================${NC}"
-    echo -e "${GREEN} SUCCESS! Server is running.${NC}"
-    echo -e "${GREEN} URL: http://${HOSTNAME:-localhost}${NC}"
-    echo -e "${GREEN} Location: $TARGET_DIR${NC}"
-    echo -e "${GREEN}==============================================${NC}"
-else
-    echo -e "${RED}==============================================${NC}"
-    echo -e "${RED} WARNING: Server started, but Localhost returned Code: $HTTP_CODE${NC}"
-    echo -e "${RED}==============================================${NC}"
-    echo -e "${YELLOW}Troubleshooting info:${NC}"
-    echo "1. Nginx Status: $(systemctl is-active nginx)"
-    echo "2. PHP Status: $(systemctl is-active php8.3-fpm)"
-    echo "3. Last Nginx Error Log:"
-    tail -n 5 /var/log/nginx/nexus_error.log 2>/dev/null || echo "No error log found."
 fi
