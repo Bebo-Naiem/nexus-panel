@@ -1,4 +1,5 @@
 <?php
+ob_start();
 /**
  * Nexus Panel - Backend Controller API
  * Handles all API requests for the game server management system
@@ -84,9 +85,11 @@ if (!isset($routes[$action])) {
 try {
     $result = call_user_func($routes[$action]);
     debugLog("API Result: SUCCESS");
+    ob_clean();
     echo json_encode($result);
 } catch (Throwable $e) {
     debugLog("API ERROR: " . $e->getMessage() . " in " . $e->getFile() . " on line " . $e->getLine());
+    ob_clean();
     echo json_encode(['error' => $e->getMessage(), 'file' => $e->getFile(), 'line' => $e->getLine()]);
 }
 
@@ -241,7 +244,7 @@ function handleListAllContainers() {
     }
     
     // Get all Docker containers
-    $output = shell_exec('docker ps -a --format=\'{{.ID}}\t{{.Names}}\t{{.Status}}\' 2>&1');
+    $output = shell_exec('docker ps -a --format=\'{{.ID}}\t{{.Names}}\t{{.Status}}\' 2>&1') ?? '';
     $lines = explode("\n", trim($output));
     
     $containers = [];
