@@ -135,6 +135,14 @@ if (isset($_GET['logout'])) {
                             </a>
                         </li>
                         <li>
+                            <a href="?page=eggs" class="flex items-center p-3 rounded-lg hover:bg-slate-700 transition <?= $page === 'eggs' ? 'bg-slate-700 text-primary' : 'text-slate-300' ?>">
+                                <svg class="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"></path>
+                                </svg>
+                                Egg Management
+                            </a>
+                        </li>
+                        <li>
                             <a href="?page=create-server" class="flex items-center p-3 rounded-lg hover:bg-slate-700 transition <?= $page === 'create-server' ? 'bg-slate-700 text-primary' : 'text-slate-300' ?>">
                                 <svg class="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path>

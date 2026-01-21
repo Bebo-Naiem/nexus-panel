@@ -38,6 +38,33 @@
                     <p class="mt-1 text-sm text-slate-500">Choose a server configuration template</p>
                 </div>
                 
+                <!-- Egg File Import Section -->
+                <div class="glass rounded-lg border border-slate-700 p-6">
+                    <h3 class="text-lg font-semibold mb-4">Egg File Management</h3>
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <div>
+                            <label class="block text-sm font-medium text-slate-300 mb-2">Import Egg from File</label>
+                            <select id="eggFileSelect" 
+                                    class="w-full px-4 py-3 bg-slate-800 border border-slate-600 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent text-white">
+                                <option value="">Select Egg File...</option>
+                            </select>
+                        </div>
+                        <div class="flex items-end">
+                            <button type="button" onclick="importSelectedEgg()" 
+                                    class="w-full py-3 bg-green-600 hover:bg-green-700 rounded-lg font-medium transition">
+                                Import Selected Egg
+                            </button>
+                        </div>
+                        <div class="flex items-end">
+                            <label class="w-full py-3 bg-blue-600 hover:bg-blue-700 rounded-lg font-medium transition text-center cursor-pointer">
+                                Upload Egg File
+                                <input type="file" accept=".json" onchange="uploadEggFile(event)" class="hidden">
+                            </label>
+                        </div>
+                    </div>
+                    <p class="mt-2 text-xs text-slate-500">Upload custom egg files in JSON format or import existing ones</p>
+                </div>
+                
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
                     <div>
                         <label class="block text-sm font-medium text-slate-300 mb-2">Server Name</label>
@@ -393,7 +420,130 @@ document.addEventListener('DOMContentLoaded', async function() {
             rows[i].remove();
         }
     }
+    
+    // Add file-based egg import functionality
+    document.getElementById('eggSelect').addEventListener('change', function() {
+        const selectedOption = this.options[this.selectedIndex];
+        
+        if (selectedOption.value) {
+            // Populate docker image
+            const dockerImage = selectedOption.dataset.dockerImage;
+            if (dockerImage) {
+                document.getElementById('imageInput').value = dockerImage;
+            }
+            
+            // Set default server name based on egg
+            const serverName = selectedOption.textContent.replace(/\s+/g, '-').toLowerCase();
+            document.getElementById('serverName').placeholder = `My-${serverName}-server`;
+            
+            // Load egg-specific environment variables
+            loadEggVariables(selectedOption.value);
+        } else {
+            // Clear fields when no egg selected
+            document.getElementById('imageInput').value = '';
+            document.getElementById('serverName').placeholder = '';
+            clearEggVariables();
+        }
+    });
 });
+
+// Function to load eggs from files
+async function loadEggFiles() {
+    const result = await apiCall('list_egg_files');
+    
+    if (result.success) {
+        const select = document.getElementById('eggFileSelect');
+        select.innerHTML = '<option value="">Select Egg File...</option>';
+        
+        result.egg_files.forEach(eggFile => {
+            const option = document.createElement('option');
+            option.value = eggFile.filename;
+            option.textContent = `${eggFile.name} (${eggFile.filename})`;
+            option.dataset.description = eggFile.description || '';
+            option.dataset.dockerImage = eggFile.docker_image || '';
+            select.appendChild(option);
+        });
+    }
+}
+
+// Import egg from selected file
+async function importSelectedEgg() {
+    const select = document.getElementById('eggFileSelect');
+    const selectedOption = select.options[select.selectedIndex];
+    
+    if (!selectedOption.value) {
+        showToast('Please select an egg file to import', 'error');
+        return;
+    }
+    
+    const result = await apiCall('import_egg', { filename: selectedOption.value });
+    
+    if (result.success) {
+        showToast(result.message, 'success');
+        // Reload eggs to show the imported one
+        await loadEggs();
+        // Reload egg files
+        await loadEggFiles();
+    }
+}
+
+// Handle egg file upload
+function uploadEggFile(event) {
+    const fileInput = event.target;
+    const file = fileInput.files[0];
+    
+    if (!file) {
+        return;
+    }
+    
+    if (file.type !== 'application/json') {
+        showToast('Only JSON files are allowed', 'error');
+        fileInput.value = ''; // Clear the input
+        return;
+    }
+    
+    const formData = new FormData();
+    formData.append('egg_file', file);
+    
+    const xhr = new XMLHttpRequest();
+    
+    xhr.upload.addEventListener('progress', function(e) {
+        if (e.lengthComputable) {
+            const percentComplete = (e.loaded / e.total) * 100;
+            showToast(`Uploading: ${Math.round(percentComplete)}%`, 'info');
+        }
+    });
+    
+    xhr.addEventListener('load', function() {
+        try {
+            const response = JSON.parse(xhr.responseText);
+            if (response.success) {
+                showToast(response.message, 'success');
+                // Reload egg files
+                loadEggFiles();
+                // Clear the file input
+                fileInput.value = '';
+            } else {
+                showToast(response.error || 'Upload failed', 'error');
+            }
+        } catch (e) {
+            showToast('Upload failed: Invalid response', 'error');
+        }
+    });
+    
+    xhr.addEventListener('error', function() {
+        showToast('Upload failed: Network error', 'error');
+        fileInput.value = '';
+    });
+    
+    xhr.open('POST', 'api.php?action=upload_egg_file');
+    // Add CSRF token if needed
+    const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
+    if (csrfToken) {
+        xhr.setRequestHeader('X-CSRF-TOKEN', csrfToken);
+    }
+    xhr.send(formData);
+}
 </script>
 
 <?php endif; ?>

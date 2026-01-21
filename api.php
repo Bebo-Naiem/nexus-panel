@@ -47,7 +47,11 @@ $routes = [
     'list_email_templates' => 'handleListEmailTemplates',
     'get_email_template' => 'handleGetEmailTemplate',
     'save_email_template' => 'handleSaveEmailTemplate',
-    'create_user_admin' => 'handleCreateUserAdmin'
+    'create_user_admin' => 'handleCreateUserAdmin',
+    'import_egg' => 'handleImportEgg',
+    'list_egg_files' => 'handleListEggFiles',
+    'get_egg_file' => 'handleGetEggFile',
+    'upload_egg_file' => 'handleUploadEggFile'
 ];
 
 if (!isset($routes[$action])) {
@@ -973,6 +977,232 @@ function handleCreateUserAdmin() {
     }
     
     return ['success' => true, 'message' => 'User created successfully'];
+}
+
+// Egg file management functions
+function handleListEggFiles() {
+    global $pdo;
+    
+    if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'admin') {
+        throw new Exception('Admin access required');
+    }
+    
+    $eggsDir = __DIR__ . '/eggs';
+    $eggFiles = [];
+    
+    if (is_dir($eggsDir)) {
+        $files = scandir($eggsDir);
+        foreach ($files as $file) {
+            if (pathinfo($file, PATHINFO_EXTENSION) === 'json') {
+                $filePath = $eggsDir . '/' . $file;
+                $content = json_decode(file_get_contents($filePath), true);
+                
+                if ($content && isset($content['meta']['name'])) {
+                    $eggFiles[] = [
+                        'filename' => $file,
+                        'name' => $content['meta']['name'],
+                        'description' => $content['meta']['description'] ?? '',
+                        'author' => $content['meta']['author'] ?? 'Unknown',
+                        'version' => $content['meta']['version'] ?? 'N/A',
+                        'docker_image' => $content['features']['docker_image'] ?? 'N/A',
+                        'size' => filesize($filePath),
+                        'modified' => date('Y-m-d H:i:s', filemtime($filePath))
+                    ];
+                }
+            }
+        }
+    }
+    
+    return ['success' => true, 'egg_files' => $eggFiles];
+}
+
+function handleGetEggFile() {
+    global $pdo;
+    
+    if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'admin') {
+        throw new Exception('Admin access required');
+    }
+    
+    $filename = $_POST['filename'] ?? $_GET['filename'] ?? '';
+    
+    if (empty($filename) || !preg_match('/^[a-zA-Z0-9_-]+\.json$/', $filename)) {
+        throw new Exception('Invalid filename');
+    }
+    
+    $filePath = __DIR__ . '/eggs/' . $filename;
+    
+    if (!file_exists($filePath)) {
+        throw new Exception('Egg file not found');
+    }
+    
+    $content = file_get_contents($filePath);
+    $parsed = json_decode($content, true);
+    
+    if (!$parsed) {
+        throw new Exception('Invalid JSON in egg file');
+    }
+    
+    return ['success' => true, 'egg_data' => $parsed];
+}
+
+function handleImportEgg() {
+    global $pdo;
+    
+    if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'admin') {
+        throw new Exception('Admin access required');
+    }
+    
+    $filename = $_POST['filename'] ?? '';
+    
+    if (empty($filename) || !preg_match('/^[a-zA-Z0-9_-]+\.json$/', $filename)) {
+        throw new Exception('Invalid filename');
+    }
+    
+    $filePath = __DIR__ . '/eggs/' . $filename;
+    
+    if (!file_exists($filePath)) {
+        throw new Exception('Egg file not found');
+    }
+    
+    $content = file_get_contents($filePath);
+    $eggData = json_decode($content, true);
+    
+    if (!$eggData) {
+        throw new Exception('Invalid JSON in egg file');
+    }
+    
+    // Validate required fields
+    if (!isset($eggData['meta']['name']) || !isset($eggData['features']['docker_image'])) {
+        throw new Exception('Missing required fields in egg file');
+    }
+    
+    // Insert or update egg in database
+    $name = $eggData['meta']['name'];
+    $description = $eggData['meta']['description'] ?? '';
+    $dockerImage = $eggData['features']['docker_image'];
+    $startupCommand = $eggData['features']['startup_command'] ?? '';
+    $stopCommand = $eggData['features']['stop_command'] ?? 'stop';
+    
+    $configFiles = json_encode($eggData['config']['files'] ?? []);
+    $configStartup = json_encode($eggData['config']['startup'] ?? []);
+    $configLogs = json_encode($eggData['config']['logs'] ?? []);
+    $configStop = $eggData['config']['stop'] ?? $stopCommand;
+    $vars = json_encode($eggData['variables'] ?? []);
+    
+    // Check if egg with this name already exists
+    $stmt = $pdo->prepare("SELECT id FROM eggs WHERE name = ?");
+    $stmt->execute([$name]);
+    $existingEgg = $stmt->fetch();
+    
+    if ($existingEgg) {
+        // Update existing egg
+        $stmt = $pdo->prepare(
+            "UPDATE eggs SET 
+            description = ?, 
+            docker_image = ?, 
+            startup_command = ?, 
+            config_files = ?, 
+            config_startup = ?, 
+            config_logs = ?, 
+            config_stop = ?, 
+            vars = ?, 
+            updated_at = CURRENT_TIMESTAMP 
+            WHERE name = ?"
+        );
+        
+        $stmt->execute([
+            $description,
+            $dockerImage,
+            $startupCommand,
+            $configFiles,
+            $configStartup,
+            $configLogs,
+            $configStop,
+            $vars,
+            $name
+        ]);
+        
+        return ['success' => true, 'message' => 'Egg updated successfully'];
+    } else {
+        // Insert new egg
+        $stmt = $pdo->prepare(
+            "INSERT INTO eggs (name, description, docker_image, startup_command, config_files, config_startup, config_logs, config_stop, vars) 
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+        );
+        
+        $stmt->execute([
+            $name,
+            $description,
+            $dockerImage,
+            $startupCommand,
+            $configFiles,
+            $configStartup,
+            $configLogs,
+            $configStop,
+            $vars
+        ]);
+        
+        return ['success' => true, 'message' => 'Egg imported successfully'];
+    }
+}
+
+function handleUploadEggFile() {
+    global $pdo;
+    
+    if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'admin') {
+        throw new Exception('Admin access required');
+    }
+    
+    if (!isset($_FILES['egg_file'])) {
+        throw new Exception('No file uploaded');
+    }
+    
+    $file = $_FILES['egg_file'];
+    
+    if ($file['error'] !== UPLOAD_ERR_OK) {
+        throw new Exception('File upload error: ' . $file['error']);
+    }
+    
+    if ($file['size'] > 10 * 1024 * 1024) { // 10MB limit
+        throw new Exception('File too large (max 10MB)');
+    }
+    
+    $extension = pathinfo($file['name'], PATHINFO_EXTENSION);
+    if ($extension !== 'json') {
+        throw new Exception('Only JSON files are allowed');
+    }
+    
+    // Sanitize filename
+    $basename = pathinfo($file['name'], PATHINFO_FILENAME);
+    $basename = preg_replace('/[^a-zA-Z0-9_-]/', '_', $basename);
+    $filename = $basename . '.json';
+    
+    $targetPath = __DIR__ . '/eggs/' . $filename;
+    
+    if (!move_uploaded_file($file['tmp_name'], $targetPath)) {
+        throw new Exception('Failed to move uploaded file');
+    }
+    
+    // Validate JSON content
+    $content = file_get_contents($targetPath);
+    $parsed = json_decode($content, true);
+    
+    if (!$parsed) {
+        unlink($targetPath); // Remove invalid file
+        throw new Exception('Uploaded file contains invalid JSON');
+    }
+    
+    if (!isset($parsed['meta']['name']) || !isset($parsed['features']['docker_image'])) {
+        unlink($targetPath); // Remove invalid file
+        throw new Exception('Uploaded egg file is missing required fields');
+    }
+    
+    return [
+        'success' => true, 
+        'message' => 'Egg file uploaded successfully',
+        'filename' => $filename,
+        'name' => $parsed['meta']['name']
+    ];
 }
 
 ?>

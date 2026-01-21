@@ -1,0 +1,118 @@
+{
+  "meta": {
+    "version": "PTDL_v2",
+    "name": "Minecraft Java Server",
+    "author": "Nexus Panel Team",
+    "description": "Standard Minecraft Java Edition server with full customization options"
+  },
+  "features": {
+    "docker_image": "itzg/minecraft-server:latest",
+    "startup_command": "java -Xms{{SERVER_MEMORY}}M -Xmx{{SERVER_MEMORY}}M -jar {{SERVER_JARFILE}} nogui",
+    "stop_command": "stop"
+  },
+  "config": {
+    "files": {
+      "server.properties": {
+        "parser": "properties",
+        "find": {
+          "server-port": "{{SERVER_PORT}}",
+          "server-ip": "0.0.0.0",
+          "motd": "{{SERVER_MOTD}}",
+          "max-players": "{{MAX_PLAYERS}}",
+          "difficulty": "{{DIFFICULTY}}",
+          "gamemode": "{{GAMEMODE}}",
+          "level-name": "{{WORLD_NAME}}",
+          "white-list": "{{WHITELIST_ENABLED}}",
+          "enable-command-block": "{{COMMAND_BLOCKS}}"
+        }
+      }
+    },
+    "startup": {
+      "done": ["Done", "Server started"],
+      "user_interaction": false
+    },
+    "logs": {
+      "custom": false,
+      "location": "logs/latest.log"
+    },
+    "stop": "stop"
+  },
+  "variables": [
+    {
+      "name": "SERVER_JARFILE",
+      "description": "The JAR file to use for the server",
+      "env_variable": "SERVER_JARFILE",
+      "default_value": "server.jar",
+      "required": true,
+      "user_viewable": true,
+      "user_editable": true
+    },
+    {
+      "name": "SERVER_MOTD",
+      "description": "Message of the day shown to players",
+      "env_variable": "SERVER_MOTD",
+      "default_value": "A Nexus Panel Minecraft Server",
+      "required": true,
+      "user_viewable": true,
+      "user_editable": true
+    },
+    {
+      "name": "MAX_PLAYERS",
+      "description": "Maximum number of players allowed",
+      "env_variable": "MAX_PLAYERS",
+      "default_value": "20",
+      "required": true,
+      "user_viewable": true,
+      "user_editable": true
+    },
+    {
+      "name": "DIFFICULTY",
+      "description": "Game difficulty level",
+      "env_variable": "DIFFICULTY",
+      "default_value": "easy",
+      "required": true,
+      "user_viewable": true,
+      "user_editable": true,
+      "options": ["peaceful", "easy", "normal", "hard"]
+    },
+    {
+      "name": "GAMEMODE",
+      "description": "Default game mode",
+      "env_variable": "GAMEMODE",
+      "default_value": "survival",
+      "required": true,
+      "user_viewable": true,
+      "user_editable": true,
+      "options": ["survival", "creative", "adventure", "spectator"]
+    },
+    {
+      "name": "WORLD_NAME",
+      "description": "Name of the world directory",
+      "env_variable": "WORLD_NAME",
+      "default_value": "world",
+      "required": true,
+      "user_viewable": true,
+      "user_editable": true
+    },
+    {
+      "name": "WHITELIST_ENABLED",
+      "description": "Enable player whitelist",
+      "env_variable": "WHITELIST_ENABLED",
+      "default_value": "false",
+      "required": true,
+      "user_viewable": true,
+      "user_editable": true,
+      "options": ["true", "false"]
+    },
+    {
+      "name": "COMMAND_BLOCKS",
+      "description": "Enable command blocks",
+      "env_variable": "COMMAND_BLOCKS",
+      "default_value": "false",
+      "required": true,
+      "user_viewable": true,
+      "user_editable": true,
+      "options": ["true", "false"]
+    }
+  ]
+}
