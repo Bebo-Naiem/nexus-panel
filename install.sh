@@ -2,6 +2,7 @@
 
 # Nexus Panel Installation Script
 # Ubuntu 24.04 LTS Setup with Nginx, PHP 8.3, SQLite, and Docker
+# Project Repository: https://github.com/Bebo-Naiem/nexus-panel
 
 set -e  # Exit on any error
 
@@ -20,9 +21,9 @@ fi
 echo "✓ Running with root privileges"
 echo ""
 
-# Get current directory (this will be our web root)
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-echo "✓ Installation directory: $SCRIPT_DIR"
+# Set web root directory to standard location
+INSTALL_DIR="/var/www/nexus-panel"
+echo "✓ Installation directory: $INSTALL_DIR"
 echo ""
 
 # Update system packages
@@ -66,11 +67,13 @@ usermod -aG docker www-data
 echo "✓ Added www-data to docker group"
 echo ""
 
-# Set proper permissions for the installation directory
-echo "Setting directory permissions..."
-chown -R www-data:www-data "$SCRIPT_DIR"
-chmod -R 755 "$SCRIPT_DIR"
-chmod 664 "$SCRIPT_DIR/nexus.sqlite" 2>/dev/null || touch "$SCRIPT_DIR/nexus.sqlite" && chown www-data:www-data "$SCRIPT_DIR/nexus.sqlite" && chmod 664 "$SCRIPT_DIR/nexus.sqlite"
+# Create installation directory if it doesn't exist
+echo "Creating installation directory..."
+mkdir -p "$INSTALL_DIR"
+cp -r . "$INSTALL_DIR"
+chown -R www-data:www-data "$INSTALL_DIR"
+chmod -R 755 "$INSTALL_DIR"
+chmod 664 "$INSTALL_DIR/nexus.sqlite" 2>/dev/null || touch "$INSTALL_DIR/nexus.sqlite" && chown www-data:www-data "$INSTALL_DIR/nexus.sqlite" && chmod 664 "$INSTALL_DIR/nexus.sqlite"
 echo "✓ Directory permissions configured"
 echo ""
 
@@ -82,7 +85,7 @@ cat > "$NGINX_CONFIG" << EOF
 server {
     listen 80;
     server_name _;
-    root $SCRIPT_DIR;
+    root $INSTALL_DIR;
     index index.php index.html;
 
     # Security headers
@@ -96,38 +99,45 @@ server {
     access_log /var/log/nginx/nexus_access.log;
     error_log /var/log/nginx/nexus_error.log;
 
-    # Main location
+    # Main location - handles routing for the PHP application
     location / {
         try_files \$uri \$uri/ /index.php?\$query_string;
     }
 
-    # PHP processing
+    # PHP processing - critical for the PHP application
     location ~ \.php$ {
+        include snippets/fastcgi-php.conf;
         fastcgi_pass unix:/run/php/php8.3-fpm.sock;
-        fastcgi_index index.php;
-        fastcgi_param SCRIPT_FILENAME \$realpath_root\$fastcgi_script_name;
-        include fastcgi_params;
-        fastcgi_param DOCUMENT_ROOT \$realpath_root;
         
-        # Security
+        # Security settings
+        fastcgi_param SCRIPT_FILENAME \$request_filename;
         fastcgi_hide_header X-Powered-By;
+        fastcgi_buffer_size 128k;
+        fastcgi_buffers 4 256k;
+        fastcgi_busy_buffers_size 256k;
         fastcgi_read_timeout 300;
     }
 
-    # Deny access to hidden files
+    # Deny access to sensitive files
     location ~ /\. {
         deny all;
     }
 
-    # Deny access to backup and source files
-    location ~ \.(bak|cache|conf|dist|fla|in|log|psd|sh|sql|sw[op])$ {
+    location ~ ^/\.user\.ini {
         deny all;
     }
 
-    # Static assets with cache
-    location ~* \.(css|js|png|jpg|jpeg|gif|ico|svg)$ {
+    # Optimize static assets
+    location ~* \.(css|js|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$ {
         expires 1y;
         add_header Cache-Control "public, immutable";
+        access_log off;
+        log_not_found off;
+    }
+
+    # Protect sensitive files
+    location ~* \.(htaccess|htpasswd|ini|log|sh|sql|conf)$ {
+        deny all;
     }
 }
 EOF
@@ -204,7 +214,7 @@ echo "Important Notes:"
 echo "• Change the default admin password after first login"
 echo "• Ensure your firewall allows traffic on port 80"
 echo "• Make sure Docker containers exist before assigning them to users"
-echo "• The database file is located at: $SCRIPT_DIR/nexus.sqlite"
+echo "• The database file is located at: $INSTALL_DIR/nexus.sqlite"
 echo ""
 echo "To start using Nexus Panel:"
 echo "1. Visit the URL above in your browser"

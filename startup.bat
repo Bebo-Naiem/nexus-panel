@@ -1,6 +1,7 @@
 @echo off
 REM Nexus Panel Initialization Batch Script for Windows
 REM This script helps verify the installation on Windows
+REM Project Repository: https://github.com/Bebo-Naiem/nexus-panel
 
 echo =========================================
 echo   Nexus Panel Initialization Script (Windows)

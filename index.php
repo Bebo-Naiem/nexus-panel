@@ -51,6 +51,7 @@ if (isset($_GET['logout'])) {
         .status-stopped { background-color: #ef4444; }
         .status-offline { background-color: #64748b; }
     </style>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
 </head>
 <body class="bg-slate-900 text-white min-h-screen">
     <?php if ($isLoggedIn): ?>
@@ -61,6 +62,13 @@ if (isset($_GET['logout'])) {
                 <div class="p-6 border-b border-slate-700">
                     <h1 class="text-2xl font-bold text-primary">Nexus Panel</h1>
                     <p class="text-sm text-slate-400 mt-1">Server Management</p>
+                </div>
+                
+                <div class="p-4 border-b border-slate-700">
+                    <a href="https://github.com/Bebo-Naiem/nexus-panel" target="_blank" class="flex items-center p-2 rounded-lg hover:bg-slate-700 transition text-slate-300">
+                        <i class="fab fa-github text-xl mr-3"></i>
+                        <span>GitHub Repository</span>
+                    </a>
                 </div>
                 
                 <nav class="flex-1 p-4">

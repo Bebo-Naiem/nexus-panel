@@ -2,6 +2,7 @@
 
 # Nexus Panel Startup Script
 # Initializes the application and runs setup tasks
+# Project Repository: https://github.com/Bebo-Naiem/nexus-panel
 
 echo "========================================="
 echo "  Nexus Panel Initialization Script"

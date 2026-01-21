@@ -2,6 +2,10 @@
 
 A complete game server management system built with PHP, similar to Pterodactyl, designed for Ubuntu 24.04 LTS. Features advanced server provisioning, real-time monitoring, and comprehensive user management.
 
+## Repository
+
+Find the project source code at: [https://github.com/Bebo-Naiem/nexus-panel](https://github.com/Bebo-Naiem/nexus-panel)
+
 ## Features
 
 - **User Management**: Register, login, profile management, and role-based access
@@ -39,7 +43,7 @@ A complete game server management system built with PHP, similar to Pterodactyl,
 
 1. Clone this repository:
    ```bash
-   git clone https://github.com/yourusername/nexus-panel.git
+   git clone https://github.com/Bebo-Naiem/nexus-panel.git
    cd nexus-panel
    ```
 
@@ -47,6 +51,8 @@ A complete game server management system built with PHP, similar to Pterodactyl,
    ```bash
    sudo bash install.sh
    ```
+
+The files will be automatically copied to `/var/www/nexus-panel/` during installation.
 
 3. Access the panel:
    - Visit `http://YOUR_SERVER_IP` in your browser
