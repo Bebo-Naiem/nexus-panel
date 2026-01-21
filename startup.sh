@@ -24,7 +24,8 @@ show_usage() {
     echo "Options:"
     echo "  install       - Install dependencies and setup panel"
     echo "  start         - Start development server only"
-    echo "  auto          - Automatic install + start (recommended)"
+    echo "  nginx         - Configure and start with Nginx (recommended)"
+    echo "  auto          - Automatic install + start (legacy)"
     echo "  help          - Show this help message"
     exit 1
 }
@@ -148,6 +149,69 @@ set_permissions() {
     echo -e "${GREEN}✓ Permissions set${NC}"
 }
 
+# Function to configure and start Nginx
+setup_nginx() {
+    echo -e "${BLUE}Configuring Nginx...${NC}"
+    
+    if [ ! -f "index.php" ]; then
+        echo -e "${RED}Error: index.php not found in current directory${NC}"
+        exit 1
+    fi
+    
+    # Get current directory
+    CURRENT_DIR=$(pwd)
+    
+    # Create Nginx configuration
+    NGINX_CONFIG="/etc/nginx/sites-available/nexus-panel"
+    NGINX_LINK="/etc/nginx/sites-enabled/nexus-panel"
+    
+    # Backup existing config if it exists
+    if [ -f "$NGINX_CONFIG" ]; then
+        cp "$NGINX_CONFIG" "$NGINX_CONFIG.backup.$(date +%s)"
+    fi
+    
+    # Create Nginx server block
+    cat > "$NGINX_CONFIG" << EOF
+server {
+    listen 80;
+    server_name _;
+    root $CURRENT_DIR;
+    index index.php index.html;
+
+    location / {
+        try_files \$uri \$uri/ /index.php?\$query_string;
+    }
+
+    location ~ \.php$ {
+        include snippets/fastcgi-php.conf;
+        fastcgi_pass unix:/var/run/php/php8.3-fpm.sock;
+        fastcgi_param SCRIPT_FILENAME \$document_root\$fastcgi_script_name;
+        include fastcgi_params;
+    }
+
+    location ~ /\. {
+        deny all;
+    }
+}
+EOF
+    
+    # Enable the site
+    ln -sf "$NGINX_CONFIG" "$NGINX_LINK"
+    
+    # Test Nginx configuration
+    if nginx -t 2>/dev/null; then
+        # Reload Nginx
+        systemctl reload nginx
+        echo -e "${GREEN}✓ Nginx configured and reloaded${NC}"
+        echo -e "${GREEN}✓ Nexus Panel is now accessible at: http://localhost${NC}"
+        echo -e "${YELLOW}Default credentials: admin / admin123${NC}"
+    else
+        echo -e "${RED}✗ Nginx configuration test failed${NC}"
+        echo -e "${YELLOW}Configuration saved to: $NGINX_CONFIG${NC}"
+        exit 1
+    fi
+}
+
 # Function to start development server
 start_dev_server() {
     echo -e "${BLUE}Starting development server...${NC}"
@@ -199,6 +263,33 @@ start_dev_server() {
     php -S localhost:$PORT
 }
 
+# Function to start with Nginx
+start_with_nginx() {
+    setup_nginx
+    
+    # Start PHP-FPM if not running
+    if ! systemctl is-active --quiet php8.3-fpm; then
+        systemctl start php8.3-fpm
+        systemctl enable php8.3-fpm
+        echo -e "${GREEN}✓ PHP-FPM started and enabled${NC}"
+    fi
+    
+    # Start Nginx if not running
+    if ! systemctl is-active --quiet nginx; then
+        systemctl start nginx
+        systemctl enable nginx
+        echo -e "${GREEN}✓ Nginx started and enabled${NC}"
+    fi
+    
+    echo -e "${GREEN}=========================================${NC}"
+    echo -e "${GREEN}  NEXUS PANEL IS NOW RUNNING WITH NGINX${NC}"
+    echo -e "${GREEN}=========================================${NC}"
+    echo -e "${YELLOW}Access the panel at: http://${HOSTNAME:-localhost}${NC}"
+    echo -e "${YELLOW}Default credentials: admin / admin123${NC}"
+    echo -e "${GREEN}Panel configured to run automatically with Nginx${NC}"
+    echo -e "${GREEN}=========================================${NC}"
+}
+
 # Function for automatic installation and start
 automatic_install() {
     echo -e "${BLUE}Starting automatic installation and setup...${NC}"
@@ -226,7 +317,7 @@ case "${1:-help}" in
         clone_repository
         setup_database
         set_permissions
-        echo -e "${GREEN}Installation completed! Run './startup.sh start' to start the server.${NC}"
+        echo -e "${GREEN}Installation completed! Run './startup.sh nginx' to start with Nginx.${NC}"
         ;;
     "start")
         if [ ! -f "index.php" ]; then
@@ -238,6 +329,17 @@ case "${1:-help}" in
             fi
         fi
         start_dev_server
+        ;;
+    "nginx")
+        if [ ! -f "index.php" ]; then
+            if [ -d "nexus-panel" ]; then
+                cd nexus-panel
+            else
+                echo -e "${RED}Nexus Panel directory not found${NC}"
+                exit 1
+            fi
+        fi
+        start_with_nginx
         ;;
     "auto")
         automatic_install
