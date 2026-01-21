@@ -58,6 +58,7 @@ class Database {
                 memory_limit INTEGER DEFAULT 1024,
                 cpu_limit INTEGER DEFAULT 100,
                 disk_limit INTEGER DEFAULT 10240,
+                data_path TEXT,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL,
@@ -78,19 +79,24 @@ class Database {
             )
         ");
                 
-        // Create server variables table for environment variables
-        $this->pdo->exec(
-            "CREATE TABLE IF NOT EXISTS server_variables (
+        // Create server variables table
+        $this->pdo->exec("
+            CREATE TABLE IF NOT EXISTS server_variables (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                server_id INTEGER NOT NULL,
-                variable_key TEXT NOT NULL,
-                variable_value TEXT NOT NULL,
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                server_id INTEGER,
+                variable_key TEXT,
+                variable_value TEXT,
                 FOREIGN KEY (server_id) REFERENCES servers(id) ON DELETE CASCADE
             )
         ");
-                
-        // Create activity logs table
+
+        // Support for File Manager (data_path column)
+        try {
+            $this->pdo->query("SELECT data_path FROM servers LIMIT 1");
+        } catch (Exception $e) {
+            $this->pdo->exec("ALTER TABLE servers ADD COLUMN data_path TEXT");
+        }
+    // Create activity logs table
         $this->pdo->exec(
             "CREATE TABLE IF NOT EXISTS activity_logs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,

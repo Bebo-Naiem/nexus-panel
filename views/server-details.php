@@ -128,6 +128,10 @@ if ($containerId) {
                             class="px-4 py-2 bg-yellow-600 hover:bg-yellow-700 rounded-lg text-sm font-medium transition">
                         Restart
                     </button>
+                    <a href="?page=file-manager&container=<?= urlencode($serverDetails['container_id']) ?>" 
+                       class="px-4 py-2 bg-primary hover:bg-opacity-90 rounded-lg text-sm font-medium transition flex items-center">
+                        <i class="fas fa-folder-open mr-2"></i> Files
+                    </a>
                 </div>
             </div>
         </div>

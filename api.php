@@ -44,6 +44,11 @@ $routes = [
     'get_logs' => 'handleGetLogs',
     'create_server' => 'handleCreateServer',
     'delete_server' => 'handleDeleteServer',
+    'list_files' => 'handleListFiles',
+    'read_file' => 'handleReadFile',
+    'save_file' => 'handleSaveFile',
+    'delete_file' => 'handleDeleteFile',
+    'upload_file' => 'handleUploadFile',
     'get_images' => 'handleGetImages',
     'pull_image' => 'handlePullImage',
     'get_server_stats' => 'handleGetServerStats',
@@ -518,6 +523,77 @@ function handleCreateServer() {
     } catch (Exception $e) {
         throw new Exception('Failed to create container: ' . $e->getMessage());
     }
+}
+
+function handleListFiles() {
+    global $pdo;
+    if (!isset($_SESSION['user_id'])) throw new Exception('Not authenticated');
+    
+    $containerId = $_POST['container_id'] ?? $_GET['container_id'] ?? '';
+    $path = $_POST['path'] ?? $_GET['path'] ?? '/';
+    
+    $serverManager = new ServerManager($pdo);
+    $files = $serverManager->listFiles($containerId, $_SESSION['user_id'], $path);
+    
+    return ['success' => true, 'files' => $files];
+}
+
+function handleReadFile() {
+    global $pdo;
+    if (!isset($_SESSION['user_id'])) throw new Exception('Not authenticated');
+    
+    $containerId = $_POST['container_id'] ?? '';
+    $path = $_POST['path'] ?? '';
+    
+    $serverManager = new ServerManager($pdo);
+    $content = $serverManager->readFile($containerId, $_SESSION['user_id'], $path);
+    
+    return ['success' => true, 'content' => $content];
+}
+
+function handleSaveFile() {
+    global $pdo;
+    if (!isset($_SESSION['user_id'])) throw new Exception('Not authenticated');
+    
+    $containerId = $_POST['container_id'] ?? '';
+    $path = $_POST['path'] ?? '';
+    $content = $_POST['content'] ?? '';
+    
+    $serverManager = new ServerManager($pdo);
+    $success = $serverManager->saveFile($containerId, $_SESSION['user_id'], $path, $content);
+    
+    return ['success' => $success];
+}
+
+function handleDeleteFile() {
+    global $pdo;
+    if (!isset($_SESSION['user_id'])) throw new Exception('Not authenticated');
+    
+    $containerId = $_POST['container_id'] ?? '';
+    $path = $_POST['path'] ?? '';
+    
+    $serverManager = new ServerManager($pdo);
+    $success = $serverManager->deleteFile($containerId, $_SESSION['user_id'], $path);
+    
+    return ['success' => $success];
+}
+
+function handleUploadFile() {
+    global $pdo;
+    if (!isset($_SESSION['user_id'])) throw new Exception('Not authenticated');
+    
+    $containerId = $_POST['container_id'] ?? '';
+    $path = $_POST['path'] ?? '/';
+    
+    if (!isset($_FILES['file'])) throw new Exception('No file uploaded');
+    
+    $serverManager = new ServerManager($pdo);
+    $basePath = ltrim($path, '/');
+    $destPath = ($basePath ? $basePath . '/' : '') . $_FILES['file']['name'];
+    
+    $success = $serverManager->saveFile($containerId, $_SESSION['user_id'], $destPath, file_get_contents($_FILES['file']['tmp_name']));
+    
+    return ['success' => $success];
 }
 
 function handleDeleteServer() {

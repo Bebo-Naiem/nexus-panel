@@ -220,6 +220,9 @@ if (isset($_GET['logout'])) {
                         case 'admin-update':
                             include 'views/admin-update.php';
                             break;
+                        case 'file-manager':
+                            include 'views/file-manager.php';
+                            break;
                         default:
                             include 'views/dashboard.php';
                     }

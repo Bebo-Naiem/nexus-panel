@@ -7,6 +7,8 @@
 class Config {
     // Database settings
     public const DB_PATH = __DIR__ . '/nexus.sqlite';
+    public const DATA_DIR = __DIR__ . '/data';
+    public const SERVER_DATA_DIR = __DIR__ . '/data/servers';
     
     // Docker settings
     public const DOCKER_SOCKET = '/var/run/docker.sock';

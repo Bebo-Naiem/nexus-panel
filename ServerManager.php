@@ -40,13 +40,25 @@ class ServerManager {
                 'cpu' => ($settings['cpu_limit'] ?? Config::DEFAULT_CPU_LIMIT) / 100
             ];
             
+            // Prepare host directory for persistent data
+            $hostDataDir = Config::SERVER_DATA_DIR . '/' . $containerName;
+            if (!is_dir($hostDataDir)) {
+                mkdir($hostDataDir, 0755, true);
+            }
+            
+            // Map volumes (host_path => container_path)
+            $volumes = [
+                $hostDataDir => '/home/container'
+            ];
+            
             // Create the container
             $result = $this->docker->createContainer(
                 $containerName,
                 $image,
                 $envVars,
                 $portMappings,
-                $resources
+                $resources,
+                $volumes
             );
             
             if (!$result['success']) {
@@ -55,8 +67,8 @@ class ServerManager {
             
             // Store server in database
             $stmt = $this->pdo->prepare("
-                INSERT INTO servers (name, container_id, user_id, egg_id, status, description, memory_limit, cpu_limit, disk_limit) 
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO servers (name, container_id, user_id, egg_id, status, description, memory_limit, cpu_limit, disk_limit, data_path) 
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ");
             $description = $settings['description'] ?? '';
             $stmt->execute([
@@ -68,7 +80,8 @@ class ServerManager {
                 $description,
                 $settings['memory'] ?? Config::DEFAULT_MEMORY,
                 $settings['cpu_limit'] ?? Config::DEFAULT_CPU_LIMIT,
-                $settings['disk_space'] ?? Config::DEFAULT_DISK_SPACE
+                $settings['disk_space'] ?? Config::DEFAULT_DISK_SPACE,
+                $hostDataDir
             ]);
             
             $serverId = $this->pdo->lastInsertId();
@@ -332,6 +345,102 @@ class ServerManager {
             $_SERVER['REMOTE_ADDR'] ?? 'unknown',
             $_SERVER['HTTP_USER_AGENT'] ?? 'unknown'
         ]);
+    }
+
+    /**
+     * Get host path for server files
+     */
+    private function getServerPath($containerId, $userId) {
+        $stmt = $this->pdo->prepare("SELECT data_path FROM servers WHERE container_id = ? AND (user_id = ? OR ? = (SELECT id FROM users WHERE role = 'admin'))");
+        $stmt->execute([$containerId, $userId, $userId]);
+        return $stmt->fetchColumn();
+    }
+
+    /**
+     * List files in server directory
+     */
+    public function listFiles($containerId, $userId, $subPath = '') {
+        $basePath = $this->getServerPath($containerId, $userId);
+        if (!$basePath) throw new Exception('Server not found or access denied');
+
+        $fullPath = realpath($basePath . '/' . ltrim($subPath, '/'));
+        if (!$fullPath || strpos($fullPath, realpath($basePath)) !== 0) {
+            throw new Exception('Invalid path');
+        }
+
+        $files = [];
+        if (is_dir($fullPath)) {
+            foreach (scandir($fullPath) as $item) {
+                if ($item === '.' || $item === '..') continue;
+                $itemPath = $fullPath . '/' . $item;
+                $files[] = [
+                    'name' => $item,
+                    'is_directory' => is_dir($itemPath),
+                    'size' => is_file($itemPath) ? filesize($itemPath) : 0,
+                    'mtime' => filemtime($itemPath)
+                ];
+            }
+        }
+        return $files;
+    }
+
+    /**
+     * Read file content
+     */
+    public function readFile($containerId, $userId, $filePath) {
+        $basePath = $this->getServerPath($containerId, $userId);
+        if (!$basePath) throw new Exception('Server not found or access denied');
+
+        $fullPath = realpath($basePath . '/' . ltrim($filePath, '/'));
+        if (!$fullPath || strpos($fullPath, realpath($basePath)) !== 0 || !is_file($fullPath)) {
+            throw new Exception('Invalid file path');
+        }
+
+        return file_get_contents($fullPath);
+    }
+
+    /**
+     * Save file content
+     */
+    public function saveFile($containerId, $userId, $filePath, $content) {
+        $basePath = $this->getServerPath($containerId, $userId);
+        if (!$basePath) throw new Exception('Server not found or access denied');
+
+        $fullPath = $basePath . '/' . ltrim($filePath, '/');
+        // Simple security check (could be improved)
+        if (strpos(realpath(dirname($fullPath)), realpath($basePath)) !== 0) {
+            throw new Exception('Invalid file path');
+        }
+
+        return file_put_contents($fullPath, $content) !== false;
+    }
+
+    /**
+     * Delete file or directory
+     */
+    public function deleteFile($containerId, $userId, $path) {
+        $basePath = $this->getServerPath($containerId, $userId);
+        if (!$basePath) throw new Exception('Server not found or access denied');
+
+        $fullPath = realpath($basePath . '/' . ltrim($path, '/'));
+        if (!$fullPath || strpos($fullPath, realpath($basePath)) !== 0) {
+            throw new Exception('Invalid path');
+        }
+
+        if (is_dir($fullPath)) {
+            return $this->recursiveDelete($fullPath);
+        } else {
+            return unlink($fullPath);
+        }
+    }
+
+    private function recursiveDelete($dir) {
+        if (!is_dir($dir)) return unlink($dir);
+        foreach (scandir($dir) as $item) {
+            if ($item == '.' || $item == '..') continue;
+            if (!$this->recursiveDelete($dir . DIRECTORY_SEPARATOR . $item)) return false;
+        }
+        return rmdir($dir);
     }
 }
 ?>

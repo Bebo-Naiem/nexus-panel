@@ -143,7 +143,7 @@ class DockerManager {
     /**
      * Create a new container
      */
-    public function createContainer($name, $image, $envVars = [], $portMappings = [], $resources = []) {
+    public function createContainer($name, $image, $envVars = [], $portMappings = [], $resources = [], $volumes = []) {
         $cmd = "docker run -d --name '$name'";
         
         // Add environment variables
@@ -154,6 +154,11 @@ class DockerManager {
         // Add port mappings
         foreach ($portMappings as $hostPort => $containerPort) {
             $cmd .= " -p $hostPort:$containerPort";
+        }
+        
+        // Add volumes
+        foreach ($volumes as $hostPath => $containerPath) {
+            $cmd .= " -v \"$hostPath:$containerPath\"";
         }
         
         // Add resource limits
