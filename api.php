@@ -63,7 +63,7 @@ $routes = [
     'wings_server_stats' => 'handleWingsServerStats',
     'wings_system_resources' => 'handleWingsSystemResources',
     'check_update' => 'handleCheckUpdate',
-    'perform_update' => 'handlePerformUpdate'/*,
+    'perform_update' => 'handlePerformUpdate',
     
     // Email Routes
     'get_smtp_config' => 'handleGetSmtpConfig',
@@ -71,7 +71,7 @@ $routes = [
     'test_smtp' => 'handleTestSmtp',
     'list_email_templates' => 'handleListEmailTemplates',
     'get_email_template' => 'handleGetEmailTemplate',
-    'save_email_template' => 'handleSaveEmailTemplate'*/
+    'save_email_template' => 'handleSaveEmailTemplate'
 ];
 
 if (!isset($routes[$action])) {
@@ -1467,5 +1467,166 @@ function handlePerformUpdate() {
         'success' => $success,
         'output' => $outputString
     ];
+}
+// Email Management Functions
+function handleGetSmtpConfig() {
+    global $pdo;
+
+    if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'admin') {
+        throw new Exception('Admin access required');
+    }
+
+    $stmt = $pdo->query("SELECT * FROM email_config WHERE is_active = 1 LIMIT 1");
+    $config = $stmt->fetch();
+
+    if ($config) {
+        $config['smtp_password'] = ''; // Mask password
+    }
+
+    return ['success' => true, 'config' => $config];
+}
+
+function handleSaveSmtpConfig() {
+    global $pdo;
+
+    if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'admin') {
+        throw new Exception('Admin access required');
+    }
+
+    $host = $_POST['smtp_host'] ?? '';
+    $port = $_POST['smtp_port'] ?? 587;
+    $encryption = $_POST['smtp_encryption'] ?? 'tls';
+    $username = $_POST['smtp_username'] ?? '';
+    $password = $_POST['smtp_password'] ?? '';
+    $fromEmail = $_POST['from_email'] ?? '';
+    $fromName = $_POST['from_name'] ?? '';
+
+    // Validate
+    if (empty($host) || empty($port) || empty($fromEmail) || empty($fromName)) {
+        throw new Exception('Missing required SMTP fields');
+    }
+
+    // Check if config exists
+    $stmt = $pdo->query("SELECT id FROM email_config WHERE is_active = 1 LIMIT 1");
+    $existing = $stmt->fetch();
+
+    if ($existing) {
+        if (!empty($password)) {
+            $stmt = $pdo->prepare("
+                UPDATE email_config SET 
+                smtp_host = ?, smtp_port = ?, smtp_encryption = ?, 
+                smtp_username = ?, smtp_password = ?, 
+                from_email = ?, from_name = ? 
+                WHERE id = ?
+            ");
+            $stmt->execute([$host, $port, $encryption, $username, $password, $fromEmail, $fromName, $existing['id']]);
+        } else {
+            // Updating without changing password
+            $stmt = $pdo->prepare("
+                UPDATE email_config SET 
+                smtp_host = ?, smtp_port = ?, smtp_encryption = ?, 
+                smtp_username = ?, 
+                from_email = ?, from_name = ? 
+                WHERE id = ?
+            ");
+            $stmt->execute([$host, $port, $encryption, $username, $fromEmail, $fromName, $existing['id']]);
+        }
+    } else {
+        $stmt = $pdo->prepare("
+            INSERT INTO email_config (smtp_host, smtp_port, smtp_encryption, smtp_username, smtp_password, from_email, from_name, is_active) 
+            VALUES (?, ?, ?, ?, ?, ?, ?, 1)
+        ");
+        $stmt->execute([$host, $port, $encryption, $username, $password, $fromEmail, $fromName]);
+    }
+
+    return ['success' => true];
+}
+
+function handleTestSmtp() {
+    global $pdo;
+
+    if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'admin') {
+        throw new Exception('Admin access required');
+    }
+
+    require_once 'EmailManager.php';
+    $emailManager = new EmailManager($pdo);
+    return $emailManager->testConnection();
+}
+
+function handleListEmailTemplates() {
+    global $pdo;
+
+    if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'admin') {
+        throw new Exception('Admin access required');
+    }
+
+    $stmt = $pdo->query("SELECT * FROM email_templates ORDER BY name ASC");
+    $templates = $stmt->fetchAll();
+
+    return ['success' => true, 'templates' => $templates];
+}
+
+function handleGetEmailTemplate() {
+    global $pdo;
+
+    if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'admin') {
+        throw new Exception('Admin access required');
+    }
+
+    $name = $_POST['template_name'] ?? '';
+    if (empty($name)) {
+        throw new Exception('Template name required');
+    }
+
+    $stmt = $pdo->prepare("SELECT * FROM email_templates WHERE name = ?");
+    $stmt->execute([$name]);
+    $template = $stmt->fetch();
+
+    if (!$template) {
+        throw new Exception('Template not found');
+    }
+
+    return ['success' => true, 'template' => $template];
+}
+
+function handleSaveEmailTemplate() {
+    global $pdo;
+
+    if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'admin') {
+        throw new Exception('Admin access required');
+    }
+
+    $name = $_POST['name'] ?? '';
+    $subject = $_POST['subject'] ?? '';
+    $body = $_POST['body'] ?? '';
+    $isHtml = isset($_POST['is_html']) ? 1 : 0;
+    $isActive = isset($_POST['is_active']) ? 1 : 0;
+
+    if (empty($name) || empty($subject) || empty($body)) {
+        throw new Exception('Name, subject, and body are required');
+    }
+
+    // Check if exists
+    $stmt = $pdo->prepare("SELECT id FROM email_templates WHERE name = ?");
+    $stmt->execute([$name]);
+    $existing = $stmt->fetch();
+
+    if ($existing) {
+        $stmt = $pdo->prepare("
+            UPDATE email_templates SET 
+            subject = ?, body = ?, is_html = ?, is_active = ?, updated_at = CURRENT_TIMESTAMP 
+            WHERE name = ?
+        ");
+        $stmt->execute([$subject, $body, $isHtml, $isActive, $name]);
+    } else {
+        $stmt = $pdo->prepare("
+            INSERT INTO email_templates (name, subject, body, is_html, is_active) 
+            VALUES (?, ?, ?, ?, ?)
+        ");
+        $stmt->execute([$name, $subject, $body, $isHtml, $isActive]);
+    }
+
+    return ['success' => true];
 }
 ?>
