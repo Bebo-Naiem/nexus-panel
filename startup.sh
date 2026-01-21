@@ -315,16 +315,44 @@ EOF
     # Enable the site
     ln -sf "$NGINX_CONFIG" "$NGINX_LINK"
     
+    # Check if port 80 is available
+    if netstat -tuln | grep -q ':80 '; then
+        echo -e "${YELLOW}Warning: Port 80 is already in use${NC}"
+        netstat -tuln | grep ':80 '
+        echo -e "${YELLOW}Stopping any service on port 80...${NC}"
+        # Try to identify what's using port 80
+        lsof -i :80 2>/dev/null | head -n 10 || true
+        # Kill any process on port 80 if it's not nginx
+        if ! pgrep nginx >/dev/null 2>&1; then
+            sudo fuser -k 80/tcp 2>/dev/null || true
+            sleep 2
+        fi
+    fi
+    
     # Test Nginx configuration
-    if nginx -t 2>/dev/null; then
-        # Reload Nginx
-        systemctl reload nginx
-        echo -e "${GREEN}✓ Nginx configured and reloaded${NC}"
-        echo -e "${GREEN}✓ Nexus Panel is now accessible at: http://localhost${NC}"
-        echo -e "${YELLOW}Default credentials: admin / admin123${NC}"
+    if nginx -t; then
+        # Stop nginx if running before enabling new site
+        systemctl stop nginx 2>/dev/null || true
+        sleep 2  # Give time for nginx to fully stop
+        
+        # Reload systemd to pick up any changes
+        systemctl daemon-reload
+        
+        # Start Nginx
+        if systemctl start nginx; then
+            echo -e "${GREEN}✓ Nginx configured and started${NC}"
+            echo -e "${GREEN}✓ Nexus Panel is now accessible at: http://localhost${NC}"
+            echo -e "${YELLOW}Default credentials: admin / admin123${NC}"
+        else
+            echo -e "${RED}✗ Nginx failed to start${NC}"
+            echo -e "${YELLOW}Check nginx status with: systemctl status nginx${NC}"
+            journalctl -xeu nginx --no-pager | head -n 20
+            exit 1
+        fi
     else
         echo -e "${RED}✗ Nginx configuration test failed${NC}"
         echo -e "${YELLOW}Configuration saved to: $NGINX_CONFIG${NC}"
+        nginx -t 2>&1
         exit 1
     fi
 }
@@ -346,13 +374,27 @@ start_with_nginx() {
         systemctl start php8.3-fpm
         systemctl enable php8.3-fpm
         echo -e "${GREEN}✓ PHP-FPM started and enabled${NC}"
+    else
+        # Restart PHP-FPM to ensure it's working properly
+        systemctl restart php8.3-fpm
+        echo -e "${GREEN}✓ PHP-FPM restarted${NC}"
     fi
     
-    # Start Nginx if not running
-    if ! systemctl is-active --quiet nginx; then
-        systemctl start nginx
+    # Ensure Nginx is not running before starting
+    systemctl stop nginx 2>/dev/null || true
+    sleep 2
+    
+    # Start Nginx
+    if systemctl start nginx; then
         systemctl enable nginx
         echo -e "${GREEN}✓ Nginx started and enabled${NC}"
+    else
+        echo -e "${RED}✗ Nginx failed to start${NC}"
+        echo -e "${YELLOW}Check configuration and logs:${NC}"
+        nginx -t
+        systemctl status nginx --no-pager
+        journalctl -xeu nginx --no-pager | head -n 20
+        exit 1
     fi
     
     echo -e "${GREEN}=========================================${NC}"
