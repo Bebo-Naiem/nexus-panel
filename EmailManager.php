@@ -88,6 +88,7 @@ class EmailManager {
             $errorNum = 0;
             $errorStr = '';
             
+            // Connect with appropriate encryption
             if ($encryption === 'ssl') {
                 $socket = fsockopen("ssl://{$smtpHost}", $smtpPort, $errorNum, $errorStr, 30);
             } elseif ($encryption === 'tls') {
@@ -100,71 +101,103 @@ class EmailManager {
                 throw new Exception("Could not connect to SMTP server: {$errorStr} ({$errorNum})");
             }
             
-            // SMTP handshake
+            // Read initial server response
             $response = fgets($socket, 1024);
             
-            // EHLO
-            fputs($socket, "EHLO {$smtpHost}\r\n");
+            // Send EHLO command
+            $ehloCommand = $encryption === 'ssl' ? "EHLO {$smtpHost}" : "EHLO {$smtpHost}";
+            fputs($socket, "{$ehloCommand}\r\n");
             $response = fgets($socket, 1024);
             
-            // Start TLS if needed
+            // If using TLS, initiate STARTTLS
             if ($encryption === 'tls') {
                 fputs($socket, "STARTTLS\r\n");
                 $response = fgets($socket, 1024);
                 
                 // Upgrade connection to TLS
-                stream_socket_enable_crypto($socket, true, STREAM_CRYPTO_METHOD_TLS_CLIENT);
+                if (!stream_socket_enable_crypto($socket, true, STREAM_CRYPTO_METHOD_TLS_CLIENT)) {
+                    fclose($socket);
+                    throw new Exception('Failed to enable TLS encryption');
+                }
                 
-                // Re-EHLO after TLS
+                // Re-send EHLO after TLS upgrade
                 fputs($socket, "EHLO {$smtpHost}\r\n");
                 $response = fgets($socket, 1024);
             }
             
-            // Authenticate
+            // Authenticate using AUTH LOGIN
             fputs($socket, "AUTH LOGIN\r\n");
             $response = fgets($socket, 1024);
             
+            if (strpos($response, '334') === false) {
+                fclose($socket);
+                throw new Exception('SMTP server did not accept authentication request');
+            }
+            
+            // Send encoded username
             fputs($socket, base64_encode($smtpUsername) . "\r\n");
             $response = fgets($socket, 1024);
             
+            if (strpos($response, '334') === false) {
+                fclose($socket);
+                throw new Exception('SMTP server did not accept username');
+            }
+            
+            // Send encoded password
             fputs($socket, base64_encode($smtpPassword) . "\r\n");
             $response = fgets($socket, 1024);
             
             if (strpos($response, '235') === false) {
                 fclose($socket);
-                throw new Exception('SMTP authentication failed');
+                throw new Exception('SMTP authentication failed: ' . $response);
             }
             
-            // MAIL FROM
+            // Send MAIL FROM
             fputs($socket, "MAIL FROM: <{$fromEmail}>\r\n");
             $response = fgets($socket, 1024);
             
-            // RCPT TO
+            if (strpos($response, '250') === false) {
+                fclose($socket);
+                throw new Exception('SMTP server rejected sender: ' . $response);
+            }
+            
+            // Send RCPT TO
             fputs($socket, "RCPT TO: <{$toEmail}>\r\n");
             $response = fgets($socket, 1024);
             
-            // DATA
+            if (strpos($response, '250') === false && strpos($response, '251') === false) {
+                fclose($socket);
+                throw new Exception('SMTP server rejected recipient: ' . $response);
+            }
+            
+            // Send DATA command
             fputs($socket, "DATA\r\n");
             $response = fgets($socket, 1024);
             
-            // Send headers
-            fputs($socket, implode("\r\n", $headers) . "\r\n");
+            if (strpos($response, '354') === false) {
+                fclose($socket);
+                throw new Exception('SMTP server did not accept data: ' . $response);
+            }
             
-            // Send message
+            // Send headers
+            foreach ($headers as $header) {
+                fputs($socket, "{$header}\r\n");
+            }
+            
+            // Send message body
             fputs($socket, "\r\n{$message}\r\n");
             
             // End data with .
             fputs($socket, ".\r\n");
             $response = fgets($socket, 1024);
             
-            // QUIT
+            // Close connection
             fputs($socket, "QUIT\r\n");
             fclose($socket);
             
             // Check if email was accepted
             if (strpos($response, '250') === false) {
-                // Fallback to PHP mail() if SMTP fails
-                return $this->sendEmailFallback($toEmail, $toName, $subject, $body, $isHtml);
+                throw new Exception('SMTP server did not accept message: ' . $response);
             }
             
             // Log email activity
@@ -201,27 +234,89 @@ class EmailManager {
         }
         
         try {
-            // Send test email to admin
-            $adminStmt = $this->pdo->query("SELECT email, username FROM users WHERE role = 'admin' LIMIT 1");
-            $admin = $adminStmt->fetch();
+            // Test basic SMTP connection without sending an actual email
+            $smtpHost = $this->smtpConfig['smtp_host'];
+            $smtpPort = $this->smtpConfig['smtp_port'];
+            $smtpUsername = $this->smtpConfig['smtp_username'];
+            $smtpPassword = $this->smtpConfig['smtp_password'];
+            $encryption = $this->smtpConfig['smtp_encryption'];
             
-            if (!$admin) {
-                return ['success' => false, 'error' => 'No admin user found'];
+            // Use fsockopen for SMTP connection
+            $socket = null;
+            $errorNum = 0;
+            $errorStr = '';
+            
+            if ($encryption === 'ssl') {
+                $socket = fsockopen("ssl://{$smtpHost}", $smtpPort, $errorNum, $errorStr, 30);
+            } elseif ($encryption === 'tls') {
+                $socket = fsockopen("tcp://{$smtpHost}", $smtpPort, $errorNum, $errorStr, 30);
+            } else {
+                $socket = fsockopen($smtpHost, $smtpPort, $errorNum, $errorStr, 30);
             }
             
-            $testResult = $this->sendTemplateEmail(
-                $admin['email'],
-                $admin['username'],
-                'welcome_user',
-                [
-                    'username' => $admin['username'],
-                    'site_name' => Config::APP_NAME
-                ]
-            );
+            if (!$socket) {
+                return ['success' => false, 'error' => "Could not connect to SMTP server: {$errorStr} ({$errorNum})"];
+            }
             
-            return ['success' => true, 'message' => 'Test email sent successfully'];
+            // Read initial server response
+            $response = fgets($socket, 1024);
+            
+            // Send EHLO command
+            $ehloCommand = $encryption === 'ssl' ? "EHLO {$smtpHost}" : "EHLO {$smtpHost}";
+            fputs($socket, "{$ehloCommand}\r\n");
+            $response = fgets($socket, 1024);
+            
+            // If using TLS, initiate STARTTLS
+            if ($encryption === 'tls') {
+                fputs($socket, "STARTTLS\r\n");
+                $response = fgets($socket, 1024);
+                
+                // Upgrade connection to TLS
+                if (!stream_socket_enable_crypto($socket, true, STREAM_CRYPTO_METHOD_TLS_CLIENT)) {
+                    fclose($socket);
+                    return ['success' => false, 'error' => 'Failed to enable TLS encryption'];
+                }
+                
+                // Re-send EHLO after TLS upgrade
+                fputs($socket, "EHLO {$smtpHost}\r\n");
+                $response = fgets($socket, 1024);
+            }
+            
+            // Authenticate using AUTH LOGIN
+            fputs($socket, "AUTH LOGIN\r\n");
+            $response = fgets($socket, 1024);
+            
+            if (strpos($response, '334') === false) {
+                fclose($socket);
+                return ['success' => false, 'error' => 'SMTP server did not accept authentication request'];
+            }
+            
+            // Send encoded username
+            fputs($socket, base64_encode($smtpUsername) . "\r\n");
+            $response = fgets($socket, 1024);
+            
+            if (strpos($response, '334') === false) {
+                fclose($socket);
+                return ['success' => false, 'error' => 'SMTP server did not accept username'];
+            }
+            
+            // Send encoded password
+            fputs($socket, base64_encode($smtpPassword) . "\r\n");
+            $response = fgets($socket, 1024);
+            
+            if (strpos($response, '235') === false) {
+                fclose($socket);
+                return ['success' => false, 'error' => 'SMTP authentication failed: ' . $response];
+            }
+            
+            // Close connection
+            fputs($socket, "QUIT\r\n");
+            fclose($socket);
+            
+            return ['success' => true, 'message' => 'SMTP connection successful'];
+            
         } catch (Exception $e) {
-            return ['success' => false, 'error' => $e->getMessage()];
+            return ['success' => false, 'error' => 'SMTP connection test failed: ' . $e->getMessage()];
         }
     }
     
