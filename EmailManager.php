@@ -1,0 +1,200 @@
+<?php
+/**
+ * Nexus Panel - Email Manager
+ * Handles SMTP email sending with templates
+ */
+
+require_once 'config.php';
+
+class EmailManager {
+    private $pdo;
+    private $smtpConfig;
+    
+    public function __construct($pdo) {
+        $this->pdo = $pdo;
+        $this->loadSmtpConfig();
+    }
+    
+    private function loadSmtpConfig() {
+        $stmt = $this->pdo->query("SELECT * FROM email_config WHERE is_active = 1 LIMIT 1");
+        $this->smtpConfig = $stmt->fetch();
+    }
+    
+    /**
+     * Send email using template
+     */
+    public function sendTemplateEmail($toEmail, $toName, $templateName, $variables = []) {
+        if (!$this->smtpConfig) {
+            throw new Exception('SMTP configuration not found or not active');
+        }
+        
+        // Get template
+        $stmt = $this->pdo->prepare("SELECT * FROM email_templates WHERE name = ? AND is_active = 1");
+        $stmt->execute([$templateName]);
+        $template = $stmt->fetch();
+        
+        if (!$template) {
+            throw new Exception("Email template '$templateName' not found or inactive");
+        }
+        
+        // Process template variables
+        $subject = $this->processVariables($template['subject'], $variables);
+        $body = $this->processVariables($template['body'], $variables);
+        
+        return $this->sendEmail($toEmail, $toName, $subject, $body, $template['is_html']);
+    }
+    
+    /**
+     * Send custom email
+     */
+    public function sendEmail($toEmail, $toName, $subject, $body, $isHtml = true) {
+        if (!$this->smtpConfig) {
+            throw new Exception('SMTP configuration not found or not active');
+        }
+        
+        try {
+            // Use PHPMailer or similar library
+            // This is a simplified version - in production, use proper email library
+            
+            $headers = [];
+            $headers[] = 'MIME-Version: 1.0';
+            $headers[] = $isHtml ? 'Content-type: text/html; charset=UTF-8' : 'Content-type: text/plain; charset=UTF-8';
+            $headers[] = "From: {$this->smtpConfig['from_name']} <{$this->smtpConfig['from_email']}>";
+            $headers[] = "Reply-To: {$this->smtpConfig['from_email']}";
+            $headers[] = 'X-Mailer: PHP/' . phpversion();
+            
+            $result = mail($toEmail, $subject, $body, implode("\r\n", $headers));
+            
+            if (!$result) {
+                throw new Exception('Failed to send email');
+            }
+            
+            // Log email activity
+            $this->logEmail($toEmail, $subject, 'sent');
+            
+            return true;
+        } catch (Exception $e) {
+            $this->logEmail($toEmail, $subject, 'failed', $e->getMessage());
+            throw $e;
+        }
+    }
+    
+    /**
+     * Process template variables
+     */
+    private function processVariables($content, $variables) {
+        foreach ($variables as $key => $value) {
+            $content = str_replace('{{' . $key . '}}', $value, $content);
+        }
+        return $content;
+    }
+    
+    /**
+     * Test SMTP configuration
+     */
+    public function testConnection() {
+        if (!$this->smtpConfig) {
+            return ['success' => false, 'error' => 'No active SMTP configuration found'];
+        }
+        
+        try {
+            // Send test email to admin
+            $adminStmt = $this->pdo->query("SELECT email, username FROM users WHERE role = 'admin' LIMIT 1");
+            $admin = $adminStmt->fetch();
+            
+            if (!$admin) {
+                return ['success' => false, 'error' => 'No admin user found'];
+            }
+            
+            $testResult = $this->sendTemplateEmail(
+                $admin['email'],
+                $admin['username'],
+                'welcome_user',
+                [
+                    'username' => $admin['username'],
+                    'site_name' => Config::APP_NAME
+                ]
+            );
+            
+            return ['success' => true, 'message' => 'Test email sent successfully'];
+        } catch (Exception $e) {
+            return ['success' => false, 'error' => $e->getMessage()];
+        }
+    }
+    
+    /**
+     * Get all email templates
+     */
+    public function getTemplates() {
+        $stmt = $this->pdo->query("SELECT * FROM email_templates ORDER BY name ASC");
+        return $stmt->fetchAll();
+    }
+    
+    /**
+     * Get specific template
+     */
+    public function getTemplate($templateName) {
+        $stmt = $this->pdo->prepare("SELECT * FROM email_templates WHERE name = ?");
+        $stmt->execute([$templateName]);
+        return $stmt->fetch();
+    }
+    
+    /**
+     * Create or update template
+     */
+    public function saveTemplate($name, $subject, $body, $isHtml = true, $isActive = true) {
+        $stmt = $this->pdo->prepare(
+            "INSERT OR REPLACE INTO email_templates (name, subject, body, is_html, is_active, updated_at) 
+            VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)"
+        );
+        
+        return $stmt->execute([$name, $subject, $body, $isHtml ? 1 : 0, $isActive ? 1 : 0]);
+    }
+    
+    /**
+     * Get SMTP configuration
+     */
+    public function getSmtpConfig() {
+        return $this->smtpConfig;
+    }
+    
+    /**
+     * Save SMTP configuration
+     */
+    public function saveSmtpConfig($config) {
+        // Deactivate existing configs
+        $this->pdo->query("UPDATE email_config SET is_active = 0");
+        
+        $stmt = $this->pdo->prepare(
+            "INSERT INTO email_config (
+                smtp_host, smtp_port, smtp_username, smtp_password, 
+                smtp_encryption, from_email, from_name, is_active, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, 1, CURRENT_TIMESTAMP)"
+        );
+        
+        $result = $stmt->execute([
+            $config['smtp_host'],
+            $config['smtp_port'],
+            $config['smtp_username'],
+            $config['smtp_password'],
+            $config['smtp_encryption'],
+            $config['from_email'],
+            $config['from_name']
+        ]);
+        
+        if ($result) {
+            $this->loadSmtpConfig(); // Reload config
+        }
+        
+        return $result;
+    }
+    
+    /**
+     * Log email activity
+     */
+    private function logEmail($toEmail, $subject, $status, $error = null) {
+        // In a real implementation, you might want to log emails to a database table
+        error_log("Email to $toEmail - Subject: $subject - Status: $status" . ($error ? " - Error: $error" : ""));
+    }
+}
+?>

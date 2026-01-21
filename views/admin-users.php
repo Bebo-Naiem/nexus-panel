@@ -5,9 +5,64 @@
 </div>
 <?php else: ?>
 
+<!-- Create User Modal -->
+<div id="createUserModal" class="fixed inset-0 bg-black/50 flex items-center justify-center z-50 hidden">
+    <div class="glass rounded-xl p-6 border border-slate-700 max-w-md w-full mx-4">
+        <div class="flex justify-between items-center mb-6">
+            <h3 class="text-xl font-semibold">Create New User</h3>
+            <button onclick="closeCreateUserModal()" class="text-slate-400 hover:text-white">
+                <i class="fas fa-times"></i>
+            </button>
+        </div>
+        
+        <form id="createUserForm" class="space-y-4">
+            <div>
+                <label class="block text-sm font-medium text-slate-300 mb-2">Username *</label>
+                <input type="text" name="username" required
+                       class="w-full px-4 py-3 bg-slate-800 border border-slate-600 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent text-white placeholder-slate-400">
+            </div>
+            
+            <div>
+                <label class="block text-sm font-medium text-slate-300 mb-2">Email *</label>
+                <input type="email" name="email" required
+                       class="w-full px-4 py-3 bg-slate-800 border border-slate-600 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent text-white placeholder-slate-400">
+            </div>
+            
+            <div>
+                <label class="block text-sm font-medium text-slate-300 mb-2">Password *</label>
+                <input type="password" name="password" required minlength="6"
+                       class="w-full px-4 py-3 bg-slate-800 border border-slate-600 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent text-white placeholder-slate-400">
+                <p class="mt-1 text-sm text-slate-500">Minimum 6 characters</p>
+            </div>
+            
+            <div>
+                <label class="block text-sm font-medium text-slate-300 mb-2">Role</label>
+                <select name="role" class="w-full px-4 py-3 bg-slate-800 border border-slate-600 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent text-white">
+                    <option value="user">User</option>
+                    <option value="admin">Admin</option>
+                </select>
+            </div>
+            
+            <div class="flex space-x-3 pt-4">
+                <button type="button" onclick="closeCreateUserModal()" 
+                        class="flex-1 py-2 px-4 bg-slate-700 hover:bg-slate-600 rounded-lg font-medium transition">
+                    Cancel
+                </button>
+                <button type="submit" 
+                        class="flex-1 py-2 px-4 bg-primary hover:bg-opacity-90 rounded-lg font-medium transition">
+                    Create User
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
 <div class="space-y-6">
     <div class="flex justify-between items-center">
         <h1 class="text-3xl font-bold">Manage Users</h1>
+        <button onclick="openCreateUserModal()" class="px-4 py-2 bg-primary hover:bg-opacity-90 rounded-lg text-sm font-medium transition">
+            Add New User
+        </button>
     </div>
     
     <div class="glass rounded-xl border border-slate-700">
@@ -111,6 +166,28 @@ async function deleteUser(userId) {
         await loadUsers();
     }
 }
+
+function openCreateUserModal() {
+    document.getElementById('createUserModal').classList.remove('hidden');
+}
+
+function closeCreateUserModal() {
+    document.getElementById('createUserModal').classList.add('hidden');
+    document.getElementById('createUserForm').reset();
+}
+
+document.getElementById('createUserForm')?.addEventListener('submit', async function(e) {
+    e.preventDefault();
+    
+    const formData = new FormData(this);
+    const result = await apiCall('create_user_admin', Object.fromEntries(formData));
+    
+    if (result.success) {
+        showToast('User created successfully', 'success');
+        closeCreateUserModal();
+        await loadUsers();
+    }
+});
 </script>
 
 <?php endif; ?>

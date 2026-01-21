@@ -39,20 +39,23 @@ Find the project source code at: [https://github.com/Bebo-Naiem/nexus-panel](htt
 - Root or sudo access
 - Internet connection
 
-### Automatic Installation
+### Automatic Installation (Unified Method)
 
-1. Clone this repository:
-   ```bash
-   git clone https://github.com/Bebo-Naiem/nexus-panel.git
-   cd nexus-panel
-   ```
+Run the unified installation script which supports both methods:
 
-2. Run the installation script:
-   ```bash
-   sudo bash install.sh
-   ```
+```bash
+sudo bash install-unified.sh
+```
 
-The files will be automatically copied to `/var/www/nexus-panel/` during installation.
+The script will prompt you to choose between:
+1. **Git Clone Method** - Downloads latest code from GitHub repository
+2. **Direct File Deployment** - Uses files from current directory
+
+Both methods will automatically:
+- Install all required dependencies
+- Set up Nginx configuration
+- Configure proper file permissions
+- Start necessary services
 
 3. Access the panel:
    - Visit `http://YOUR_SERVER_IP` in your browser

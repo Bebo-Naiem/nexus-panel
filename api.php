@@ -35,7 +35,19 @@ $routes = [
     'delete_server' => 'handleDeleteServer',
     'get_images' => 'handleGetImages',
     'pull_image' => 'handlePullImage',
-    'get_server_stats' => 'handleGetServerStats'
+    'get_server_stats' => 'handleGetServerStats',
+    'list_eggs' => 'handleListEggs',
+    'get_egg' => 'handleGetEgg',
+    'create_egg' => 'handleCreateEgg',
+    'update_egg' => 'handleUpdateEgg',
+    'delete_egg' => 'handleDeleteEgg',
+    'get_smtp_config' => 'handleGetSmtpConfig',
+    'save_smtp_config' => 'handleSaveSmtpConfig',
+    'test_smtp' => 'handleTestSmtp',
+    'list_email_templates' => 'handleListEmailTemplates',
+    'get_email_template' => 'handleGetEmailTemplate',
+    'save_email_template' => 'handleSaveEmailTemplate',
+    'create_user_admin' => 'handleCreateUserAdmin'
 ];
 
 if (!isset($routes[$action])) {
@@ -404,30 +416,124 @@ function handleGetLogs() {
 function handleCreateServer() {
     global $pdo;
     
-    if (!isset($_SESSION['user_id'])) {
-        throw new Exception('Not authenticated');
+    if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'admin') {
+        throw new Exception('Admin access required');
     }
     
-    $userId = $_SESSION['user_id'];
+    $ownerId = $_POST['owner_id'] ?? 0;
+    $eggId = $_POST['egg_id'] ?? 0;
     $name = $_POST['name'] ?? '';
     $image = $_POST['image'] ?? '';
+    $description = $_POST['description'] ?? '';
+    $memory = $_POST['memory'] ?? Config::DEFAULT_MEMORY;
+    $cpuLimit = $_POST['cpu_limit'] ?? Config::DEFAULT_CPU_LIMIT;
+    $diskSpace = $_POST['disk_space'] ?? Config::DEFAULT_DISK_SPACE;
     
-    if (empty($name) || empty($image)) {
-        throw new Exception('Server name and image are required');
+    // Validate required fields
+    if (empty($ownerId) || empty($eggId) || empty($name) || empty($image)) {
+        throw new Exception('Owner, egg type, server name, and image are required');
     }
     
-    $serverManager = new ServerManager($pdo);
+    // Validate that owner exists and is not admin
+    $stmt = $pdo->prepare("SELECT id, role FROM users WHERE id = ?");
+    $stmt->execute([$ownerId]);
+    $owner = $stmt->fetch();
     
+    if (!$owner || $owner['role'] === 'admin') {
+        throw new Exception('Invalid owner selected');
+    }
+    
+    // Validate that egg exists
+    $stmt = $pdo->prepare("SELECT id FROM eggs WHERE id = ?");
+    $stmt->execute([$eggId]);
+    $egg = $stmt->fetch();
+    
+    if (!$egg) {
+        throw new Exception('Invalid egg type selected');
+    }
+    
+    // Parse environment and ports
+    $environment = [];
+    $ports = [];
+    
+    if (!empty($_POST['environment'])) {
+        $environment = json_decode($_POST['environment'], true);
+        if (!is_array($environment)) {
+            $environment = [];
+        }
+    }
+    
+    if (!empty($_POST['ports'])) {
+        $ports = json_decode($_POST['ports'], true);
+        if (!is_array($ports)) {
+            $ports = [];
+        }
+    }
+    
+    // Create server record first
+    $stmt = $pdo->prepare(
+        "INSERT INTO servers (name, container_id, user_id, egg_id, description, memory_limit, cpu_limit, disk_limit) 
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+    );
+    
+    // Generate temporary container ID (will be replaced by actual container ID)
+    $tempContainerId = 'temp_' . uniqid();
+    
+    $stmt->execute([
+        $name,
+        $tempContainerId,
+        $ownerId,
+        $eggId,
+        $description,
+        $memory,
+        $cpuLimit,
+        $diskSpace
+    ]);
+    
+    $serverId = $pdo->lastInsertId();
+    
+    // Store environment variables
+    if (!empty($environment)) {
+        $stmt = $pdo->prepare("INSERT INTO server_variables (server_id, variable_key, variable_value) VALUES (?, ?, ?)");
+        foreach ($environment as $key => $value) {
+            $stmt->execute([$serverId, $key, $value]);
+        }
+    }
+    
+    // Store port mappings
+    if (!empty($ports)) {
+        $stmt = $pdo->prepare("INSERT INTO server_allocations (server_id, ip_address, port) VALUES (?, ?, ?)");
+        foreach ($ports as $hostPort => $containerPort) {
+            $stmt->execute([$serverId, '0.0.0.0', $hostPort]);
+        }
+    }
+    
+    // Create actual Docker container
+    $serverManager = new ServerManager($pdo);
     $settings = [
-        'environment' => $_POST['environment'] ?? [],
-        'ports' => $_POST['ports'] ?? [],
-        'memory' => $_POST['memory'] ?? Config::DEFAULT_MEMORY . 'm',
-        'cpu_limit' => $_POST['cpu_limit'] ?? Config::DEFAULT_CPU_LIMIT
+        'environment' => $environment,
+        'ports' => $ports,
+        'memory' => $memory . 'm',
+        'cpu_limit' => $cpuLimit
     ];
     
-    $result = $serverManager->createServer($userId, $name, $image, $settings);
-    
-    return $result;
+    try {
+        $result = $serverManager->createServer($ownerId, $name, $image, $settings);
+        
+        if ($result['success']) {
+            // Update container ID in database
+            $stmt = $pdo->prepare("UPDATE servers SET container_id = ? WHERE id = ?");
+            $stmt->execute([$result['container_id'], $serverId]);
+        }
+        
+        return $result;
+    } catch (Exception $e) {
+        // Clean up database entry if container creation fails
+        $stmt = $pdo->prepare("DELETE FROM servers WHERE id = ?");
+        $stmt->execute([$serverId]);
+        
+        throw new Exception('Failed to create container: ' . $e->getMessage());
+    }
 }
 
 function handleDeleteServer() {
@@ -512,6 +618,361 @@ function handleGetServerStats() {
     $stats = $docker->getContainerStats($containerId);
     
     return ['success' => true, 'stats' => $stats];
+}
+
+// Egg management functions
+function handleListEggs() {
+    global $pdo;
+    
+    if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'admin') {
+        throw new Exception('Admin access required');
+    }
+    
+    $stmt = $pdo->query("SELECT id, name, description, docker_image, created_at FROM eggs ORDER BY name ASC");
+    $eggs = $stmt->fetchAll();
+    
+    return ['success' => true, 'eggs' => $eggs];
+}
+
+function handleGetEgg() {
+    global $pdo;
+    
+    if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'admin') {
+        throw new Exception('Admin access required');
+    }
+    
+    $eggId = $_POST['egg_id'] ?? $_GET['egg_id'] ?? 0;
+    
+    if (empty($eggId)) {
+        throw new Exception('Egg ID is required');
+    }
+    
+    $stmt = $pdo->prepare("SELECT * FROM eggs WHERE id = ?");
+    $stmt->execute([$eggId]);
+    $egg = $stmt->fetch();
+    
+    if (!$egg) {
+        throw new Exception('Egg not found');
+    }
+    
+    // Parse JSON fields
+    $egg['vars'] = json_decode($egg['vars'], true) ?: [];
+    $egg['config_files'] = json_decode($egg['config_files'], true) ?: [];
+    $egg['config_startup'] = json_decode($egg['config_startup'], true) ?: [];
+    $egg['config_logs'] = json_decode($egg['config_logs'], true) ?: [];
+    
+    return ['success' => true, 'egg' => $egg];
+}
+
+function handleCreateEgg() {
+    global $pdo;
+    
+    if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'admin') {
+        throw new Exception('Admin access required');
+    }
+    
+    $name = $_POST['name'] ?? '';
+    $description = $_POST['description'] ?? '';
+    $docker_image = $_POST['docker_image'] ?? '';
+    $startup_command = $_POST['startup_command'] ?? '';
+    
+    if (empty($name) || empty($docker_image)) {
+        throw new Exception('Name and Docker image are required');
+    }
+    
+    // Prepare JSON fields
+    $config_files = json_encode($_POST['config_files'] ?? []);
+    $config_startup = json_encode($_POST['config_startup'] ?? []);
+    $config_logs = json_encode($_POST['config_logs'] ?? []);
+    $config_stop = $_POST['config_stop'] ?? 'stop';
+    $vars = json_encode($_POST['vars'] ?? []);
+    
+    $stmt = $pdo->prepare(
+        "INSERT INTO eggs (name, description, docker_image, startup_command, config_files, config_startup, config_logs, config_stop, vars) 
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    );
+    
+    $stmt->execute([
+        $name,
+        $description,
+        $docker_image,
+        $startup_command,
+        $config_files,
+        $config_startup,
+        $config_logs,
+        $config_stop,
+        $vars
+    ]);
+    
+    $eggId = $pdo->lastInsertId();
+    
+    return ['success' => true, 'message' => 'Egg created successfully', 'egg_id' => $eggId];
+}
+
+function handleUpdateEgg() {
+    global $pdo;
+    
+    if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'admin') {
+        throw new Exception('Admin access required');
+    }
+    
+    $eggId = $_POST['egg_id'] ?? 0;
+    $name = $_POST['name'] ?? '';
+    $description = $_POST['description'] ?? '';
+    $docker_image = $_POST['docker_image'] ?? '';
+    $startup_command = $_POST['startup_command'] ?? '';
+    
+    if (empty($eggId) || empty($name) || empty($docker_image)) {
+        throw new Exception('Egg ID, name, and Docker image are required');
+    }
+    
+    // Prepare JSON fields
+    $config_files = json_encode($_POST['config_files'] ?? []);
+    $config_startup = json_encode($_POST['config_startup'] ?? []);
+    $config_logs = json_encode($_POST['config_logs'] ?? []);
+    $config_stop = $_POST['config_stop'] ?? 'stop';
+    $vars = json_encode($_POST['vars'] ?? []);
+    
+    $stmt = $pdo->prepare(
+        "UPDATE eggs SET 
+        name = ?, description = ?, docker_image = ?, startup_command = ?, 
+        config_files = ?, config_startup = ?, config_logs = ?, config_stop = ?, vars = ?, updated_at = CURRENT_TIMESTAMP 
+        WHERE id = ?"
+    );
+    
+    $stmt->execute([
+        $name,
+        $description,
+        $docker_image,
+        $startup_command,
+        $config_files,
+        $config_startup,
+        $config_logs,
+        $config_stop,
+        $vars,
+        $eggId
+    ]);
+    
+    return ['success' => true, 'message' => 'Egg updated successfully'];
+}
+
+function handleDeleteEgg() {
+    global $pdo;
+    
+    if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'admin') {
+        throw new Exception('Admin access required');
+    }
+    
+    $eggId = $_POST['egg_id'] ?? 0;
+    
+    if (empty($eggId)) {
+        throw new Exception('Egg ID is required');
+    }
+    
+    // Check if egg is being used by any servers
+    $stmt = $pdo->prepare("SELECT COUNT(*) FROM servers WHERE egg_id = ?");
+    $stmt->execute([$eggId]);
+    
+    if ($stmt->fetchColumn() > 0) {
+        throw new Exception('Cannot delete egg: it is being used by servers');
+    }
+    
+    $stmt = $pdo->prepare("DELETE FROM eggs WHERE id = ?");
+    $stmt->execute([$eggId]);
+    
+    return ['success' => true, 'message' => 'Egg deleted successfully'];
+}
+
+// Email management functions
+function handleGetSmtpConfig() {
+    global $pdo;
+    
+    if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'admin') {
+        throw new Exception('Admin access required');
+    }
+    
+    $stmt = $pdo->query("SELECT * FROM email_config ORDER BY is_active DESC, created_at DESC LIMIT 1");
+    $config = $stmt->fetch();
+    
+    // Hide password for security
+    if ($config && isset($config['smtp_password'])) {
+        $config['smtp_password'] = str_repeat('*', strlen($config['smtp_password']));
+    }
+    
+    return ['success' => true, 'config' => $config];
+}
+
+function handleSaveSmtpConfig() {
+    global $pdo;
+    
+    if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'admin') {
+        throw new Exception('Admin access required');
+    }
+    
+    $requiredFields = ['smtp_host', 'smtp_port', 'from_email', 'from_name'];
+    foreach ($requiredFields as $field) {
+        if (empty($_POST[$field])) {
+            throw new Exception("Field '$field' is required");
+        }
+    }
+    
+    // Deactivate existing configs
+    $pdo->query("UPDATE email_config SET is_active = 0");
+    
+    $stmt = $pdo->prepare(
+        "INSERT INTO email_config (
+            smtp_host, smtp_port, smtp_username, smtp_password, 
+            smtp_encryption, from_email, from_name, is_active, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, 1, CURRENT_TIMESTAMP)"
+    );
+    
+    $result = $stmt->execute([
+        $_POST['smtp_host'],
+        $_POST['smtp_port'],
+        $_POST['smtp_username'] ?? '',
+        $_POST['smtp_password'] ?? '',
+        $_POST['smtp_encryption'] ?? 'tls',
+        $_POST['from_email'],
+        $_POST['from_name']
+    ]);
+    
+    return ['success' => true, 'message' => 'SMTP configuration saved successfully'];
+}
+
+function handleTestSmtp() {
+    global $pdo;
+    
+    if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'admin') {
+        throw new Exception('Admin access required');
+    }
+    
+    require_once 'EmailManager.php';
+    $emailManager = new EmailManager($pdo);
+    
+    $result = $emailManager->testConnection();
+    
+    return $result;
+}
+
+function handleListEmailTemplates() {
+    global $pdo;
+    
+    if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'admin') {
+        throw new Exception('Admin access required');
+    }
+    
+    $stmt = $pdo->query("SELECT id, name, subject, is_active, created_at FROM email_templates ORDER BY name ASC");
+    $templates = $stmt->fetchAll();
+    
+    return ['success' => true, 'templates' => $templates];
+}
+
+function handleGetEmailTemplate() {
+    global $pdo;
+    
+    if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'admin') {
+        throw new Exception('Admin access required');
+    }
+    
+    $templateName = $_POST['template_name'] ?? $_GET['template_name'] ?? '';
+    
+    if (empty($templateName)) {
+        throw new Exception('Template name is required');
+    }
+    
+    $stmt = $pdo->prepare("SELECT * FROM email_templates WHERE name = ?");
+    $stmt->execute([$templateName]);
+    $template = $stmt->fetch();
+    
+    if (!$template) {
+        throw new Exception('Template not found');
+    }
+    
+    return ['success' => true, 'template' => $template];
+}
+
+function handleSaveEmailTemplate() {
+    global $pdo;
+    
+    if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'admin') {
+        throw new Exception('Admin access required');
+    }
+    
+    $requiredFields = ['name', 'subject', 'body'];
+    foreach ($requiredFields as $field) {
+        if (empty($_POST[$field])) {
+            throw new Exception("Field '$field' is required");
+        }
+    }
+    
+    $stmt = $pdo->prepare(
+        "INSERT OR REPLACE INTO email_templates (name, subject, body, is_html, is_active, updated_at) 
+        VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)"
+    );
+    
+    $result = $stmt->execute([
+        $_POST['name'],
+        $_POST['subject'],
+        $_POST['body'],
+        isset($_POST['is_html']) ? 1 : 0,
+        isset($_POST['is_active']) ? 1 : 0
+    ]);
+    
+    return ['success' => true, 'message' => 'Email template saved successfully'];
+}
+
+function handleCreateUserAdmin() {
+    global $pdo;
+    
+    if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'admin') {
+        throw new Exception('Admin access required');
+    }
+    
+    $username = $_POST['username'] ?? '';
+    $email = $_POST['email'] ?? '';
+    $password = $_POST['password'] ?? '';
+    $role = $_POST['role'] ?? 'user';
+    
+    if (empty($username) || empty($email) || empty($password)) {
+        throw new Exception('Username, email, and password are required');
+    }
+    
+    if (strlen($password) < 6) {
+        throw new Exception('Password must be at least 6 characters');
+    }
+    
+    // Check if user already exists
+    $stmt = $pdo->prepare("SELECT * FROM users WHERE username = ? OR email = ?");
+    $stmt->execute([$username, $email]);
+    $existingUser = $stmt->fetch();
+    
+    if ($existingUser) {
+        throw new Exception('Username or email already exists');
+    }
+    
+    $passwordHash = password_hash($password, PASSWORD_DEFAULT);
+    $stmt = $pdo->prepare("INSERT INTO users (username, email, password_hash, role) VALUES (?, ?, ?, ?)");
+    $stmt->execute([$username, $email, $passwordHash, $role]);
+    
+    // Send welcome email
+    try {
+        require_once 'EmailManager.php';
+        $emailManager = new EmailManager($pdo);
+        $emailManager->sendTemplateEmail(
+            $email,
+            $username,
+            'welcome_user',
+            [
+                'username' => $username,
+                'site_name' => Config::APP_NAME
+            ]
+        );
+    } catch (Exception $e) {
+        // Log email error but don't fail user creation
+        error_log('Failed to send welcome email: ' . $e->getMessage());
+    }
+    
+    return ['success' => true, 'message' => 'User created successfully'];
 }
 
 ?>

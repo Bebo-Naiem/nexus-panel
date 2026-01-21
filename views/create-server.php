@@ -19,20 +19,39 @@
         </div>
         <div class="p-6">
             <form id="createServerForm" class="space-y-6">
+                <!-- Owner Selection -->
+                <div>
+                    <label class="block text-sm font-medium text-slate-300 mb-2">Server Owner *</label>
+                    <select name="owner_id" id="ownerSelect" required
+                            class="w-full px-4 py-3 bg-slate-800 border border-slate-600 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent text-white">
+                        <option value="">Select Owner...</option>
+                    </select>
+                </div>
+                
+                <!-- Egg Selection -->
+                <div>
+                    <label class="block text-sm font-medium text-slate-300 mb-2">Server Type (Egg) *</label>
+                    <select name="egg_id" id="eggSelect" required
+                            class="w-full px-4 py-3 bg-slate-800 border border-slate-600 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent text-white">
+                        <option value="">Select Server Type...</option>
+                    </select>
+                    <p class="mt-1 text-sm text-slate-500">Choose a server configuration template</p>
+                </div>
+                
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
                     <div>
                         <label class="block text-sm font-medium text-slate-300 mb-2">Server Name</label>
-                        <input type="text" name="name" required
+                        <input type="text" name="name" id="serverName" required
                                class="w-full px-4 py-3 bg-slate-800 border border-slate-600 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent text-white placeholder-slate-400">
                     </div>
                     
                     <div>
                         <label class="block text-sm font-medium text-slate-300 mb-2">Docker Image</label>
                         <div class="flex gap-2">
-                            <input type="text" name="image" id="imageInput" required
+                            <input type="text" name="image" id="imageInput" required readonly
                                    class="flex-1 px-4 py-3 bg-slate-800 border border-slate-600 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent text-white placeholder-slate-400">
                             <button type="button" id="pullImageButton" 
-                                    class="px-4 py-3 bg-primary hover:bg-opacity-90 rounded-lg font-medium transition">
+                                    class="px-4 py-3 bg-primary hover:bg-opacity-90 rounded-lg font-medium transition disabled:opacity-50">
                                 Pull
                             </button>
                         </div>
@@ -45,23 +64,30 @@
                               class="w-full px-4 py-3 bg-slate-800 border border-slate-600 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent text-white placeholder-slate-400"></textarea>
                 </div>
                 
-                <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
-                    <div>
-                        <label class="block text-sm font-medium text-slate-300 mb-2">Memory Limit (MB)</label>
-                        <input type="number" name="memory" value="<?= Config::DEFAULT_MEMORY ?>" min="128" max="65536"
-                               class="w-full px-4 py-3 bg-slate-800 border border-slate-600 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent text-white">
-                    </div>
-                    
-                    <div>
-                        <label class="block text-sm font-medium text-slate-300 mb-2">CPU Limit (%)</label>
-                        <input type="number" name="cpu_limit" value="<?= Config::DEFAULT_CPU_LIMIT ?>" min="10" max="100"
-                               class="w-full px-4 py-3 bg-slate-800 border border-slate-600 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent text-white">
-                    </div>
-                    
-                    <div>
-                        <label class="block text-sm font-medium text-slate-300 mb-2">Disk Space (MB)</label>
-                        <input type="number" name="disk_space" value="<?= Config::DEFAULT_DISK_SPACE ?>" min="1024" max="1048576"
-                               class="w-full px-4 py-3 bg-slate-800 border border-slate-600 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent text-white">
+                <!-- Resource Management -->
+                <div class="glass rounded-lg border border-slate-700 p-6">
+                    <h3 class="text-lg font-semibold mb-4">Resource Allocation</h3>
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                        <div>
+                            <label class="block text-sm font-medium text-slate-300 mb-2">Memory Limit (MB) *</label>
+                            <input type="number" name="memory" id="memoryLimit" value="<?= Config::DEFAULT_MEMORY ?>" min="128" max="65536" required
+                                   class="w-full px-4 py-3 bg-slate-800 border border-slate-600 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent text-white">
+                            <p class="mt-1 text-xs text-slate-500">Min: 128MB, Max: 65536MB</p>
+                        </div>
+                        
+                        <div>
+                            <label class="block text-sm font-medium text-slate-300 mb-2">CPU Limit (%) *</label>
+                            <input type="number" name="cpu_limit" id="cpuLimit" value="<?= Config::DEFAULT_CPU_LIMIT ?>" min="10" max="100" required
+                                   class="w-full px-4 py-3 bg-slate-800 border border-slate-600 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent text-white">
+                            <p class="mt-1 text-xs text-slate-500">Min: 10%, Max: 100%</p>
+                        </div>
+                        
+                        <div>
+                            <label class="block text-sm font-medium text-slate-300 mb-2">Disk Space (MB) *</label>
+                            <input type="number" name="disk_space" id="diskSpace" value="<?= Config::DEFAULT_DISK_SPACE ?>" min="1024" max="1048576" required
+                                   class="w-full px-4 py-3 bg-slate-800 border border-slate-600 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent text-white">
+                            <p class="mt-1 text-xs text-slate-500">Min: 1024MB, Max: 1048576MB</p>
+                        </div>
                     </div>
                 </div>
                 
@@ -115,7 +141,13 @@
 </div>
 
 <script>
-document.addEventListener('DOMContentLoaded', function() {
+document.addEventListener('DOMContentLoaded', async function() {
+    // Load initial data
+    await Promise.all([
+        loadUsers(),
+        loadEggs()
+    ]);
+    
     // Add environment variable row
     document.getElementById('addEnvVar').addEventListener('click', function() {
         const container = document.getElementById('envVarsContainer');
@@ -227,6 +259,8 @@ document.addEventListener('DOMContentLoaded', function() {
             name: formData.get('name'),
             image: formData.get('image'),
             description: formData.get('description'),
+            owner_id: formData.get('owner_id'),
+            egg_id: formData.get('egg_id'),
             memory: formData.get('memory'),
             cpu_limit: formData.get('cpu_limit'),
             disk_space: formData.get('disk_space'),
@@ -241,6 +275,124 @@ document.addEventListener('DOMContentLoaded', function() {
             }, 1500);
         }
     });
+    
+    // Load users for owner selection
+    async function loadUsers() {
+        const result = await apiCall('list_users');
+        
+        if (result.success) {
+            const select = document.getElementById('ownerSelect');
+            select.innerHTML = '<option value="">Select Owner...</option>';
+            
+            result.users.forEach(user => {
+                if (user.role !== 'admin') { // Don't show admins as owners
+                    const option = document.createElement('option');
+                    option.value = user.id;
+                    option.textContent = `${user.username} (${user.email})`;
+                    select.appendChild(option);
+                }
+            });
+        }
+    }
+    
+    // Load eggs for server type selection
+    async function loadEggs() {
+        const result = await apiCall('list_eggs');
+        
+        if (result.success) {
+            const select = document.getElementById('eggSelect');
+            select.innerHTML = '<option value="">Select Server Type...</option>';
+            
+            result.eggs.forEach(egg => {
+                const option = document.createElement('option');
+                option.value = egg.id;
+                option.textContent = `${egg.name}`;
+                option.dataset.description = egg.description || '';
+                option.dataset.dockerImage = egg.docker_image || '';
+                select.appendChild(option);
+            });
+        }
+    }
+    
+    // Handle egg selection
+    document.getElementById('eggSelect').addEventListener('change', function() {
+        const selectedOption = this.options[this.selectedIndex];
+        
+        if (selectedOption.value) {
+            // Populate docker image
+            const dockerImage = selectedOption.dataset.dockerImage;
+            if (dockerImage) {
+                document.getElementById('imageInput').value = dockerImage;
+            }
+            
+            // Set default server name based on egg
+            const serverName = selectedOption.textContent.replace(/\s+/g, '-').toLowerCase();
+            document.getElementById('serverName').placeholder = `My-${serverName}-server`;
+            
+            // Load egg-specific environment variables
+            loadEggVariables(selectedOption.value);
+        } else {
+            // Clear fields when no egg selected
+            document.getElementById('imageInput').value = '';
+            document.getElementById('serverName').placeholder = '';
+            clearEggVariables();
+        }
+    });
+    
+    // Load egg-specific variables
+    async function loadEggVariables(eggId) {
+        const result = await apiCall('get_egg', { egg_id: eggId });
+        
+        if (result.success && result.egg.vars) {
+            try {
+                const vars = JSON.parse(result.egg.vars);
+                const container = document.getElementById('envVarsContainer');
+                
+                // Clear existing rows except the first one
+                const rows = container.querySelectorAll('.flex');
+                for (let i = 1; i < rows.length; i++) {
+                    rows[i].remove();
+                }
+                
+                // Add egg variables
+                Object.entries(vars).forEach(([key, defaultValue]) => {
+                    const newRow = document.createElement('div');
+                    newRow.className = 'flex gap-2';
+                    newRow.innerHTML = `
+                        <input type="text" value="${key}" readonly
+                               class="flex-1 px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white placeholder-slate-500 env-key">
+                        <input type="text" value="${defaultValue}" placeholder="Enter value" 
+                               class="flex-1 px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white placeholder-slate-500 env-value">
+                        <button type="button" class="remove-env-var px-3 py-2 bg-red-600 hover:bg-red-700 rounded-lg text-sm">-</button>
+                    `;
+                    container.appendChild(newRow);
+                    
+                    // Add event to remove button
+                    newRow.querySelector('.remove-env-var').addEventListener('click', function() {
+                        container.removeChild(newRow);
+                    });
+                });
+            } catch (e) {
+                console.error('Error parsing egg variables:', e);
+            }
+        }
+    }
+    
+    // Clear egg variables
+    function clearEggVariables() {
+        const container = document.getElementById('envVarsContainer');
+        const rows = container.querySelectorAll('.flex');
+        
+        // Keep first row, clear inputs
+        const firstRow = rows[0];
+        firstRow.querySelector('.env-key').value = '';
+        firstRow.querySelector('.env-value').value = '';
+        
+        // Remove additional rows
+        for (let i = 1; i < rows.length; i++) {
+            rows[i].remove();
+        }
+    }
 });
 </script>
 
