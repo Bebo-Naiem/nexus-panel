@@ -4,37 +4,44 @@
 # Ubuntu 24.04 LTS Setup with Nginx, PHP 8.3, SQLite, and Docker
 # Project Repository: https://github.com/Bebo-Naiem/nexus-panel
 
-set -e  # Exit on any error
+set -euo pipefail  # Exit on error, undefined vars, and pipe failures
 
-echo "========================================="
+# Color codes for better output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+echo -e "${BLUE}========================================="
 echo "  Nexus Panel Installation Script"
 echo "  Game Server Management System"
 echo "========================================="
-echo ""
+echo -e "${NC}"
 
 # Check if running as root
 if [[ $EUID -ne 0 ]]; then
-   echo "This script must be run as root (use sudo)" 
+   echo -e "${RED}This script must be run as root (use sudo)${NC}" 
    exit 1
 fi
 
-echo "✓ Running with root privileges"
+echo -e "${GREEN}✓ Running with root privileges${NC}"
 echo ""
 
 # Set web root directory to standard location
 INSTALL_DIR="/var/www/nexus-panel"
-echo "✓ Installation directory: $INSTALL_DIR"
+echo -e "${GREEN}✓ Installation directory: $INSTALL_DIR${NC}"
 echo ""
 
 # Update system packages
-echo "Updating system packages..."
+echo -e "${BLUE}Updating system packages...${NC}"
 apt update -y
 apt upgrade -y
-echo "✓ System packages updated"
+echo -e "${GREEN}✓ System packages updated${NC}"
 echo ""
 
 # Install required packages
-echo "Installing required packages..."
+echo -e "${BLUE}Installing required packages...${NC}"
 apt install -y \
     nginx \
     php8.3-fpm \
@@ -46,39 +53,57 @@ apt install -y \
     docker-compose-v2 \
     git \
     curl \
-    software-properties-common
-echo "✓ Required packages installed"
+    software-properties-common || {
+    echo -e "${RED}Failed to install required packages${NC}"
+    exit 1
+}
+echo -e "${GREEN}✓ Required packages installed${NC}"
 echo ""
 
 # Start and enable services
-echo "Starting and enabling services..."
-systemctl start nginx
+echo -e "${BLUE}Starting and enabling services...${NC}"
+systemctl start nginx || { echo -e "${RED}Failed to start nginx${NC}"; exit 1; }
 systemctl enable nginx
-systemctl start php8.3-fpm
+systemctl start php8.3-fpm || { echo -e "${RED}Failed to start php8.3-fpm${NC}"; exit 1; }
 systemctl enable php8.3-fpm
-systemctl start docker
+systemctl start docker || { echo -e "${RED}Failed to start docker${NC}"; exit 1; }
 systemctl enable docker
-echo "✓ Services started and enabled"
+echo -e "${GREEN}✓ Services started and enabled${NC}"
 echo ""
 
 # Add www-data to docker group
-echo "Configuring Docker permissions..."
+echo -e "${BLUE}Configuring Docker permissions...${NC}"
 usermod -aG docker www-data
-echo "✓ Added www-data to docker group"
+echo -e "${GREEN}✓ Added www-data to docker group${NC}"
 echo ""
 
 # Create installation directory if it doesn't exist
-echo "Creating installation directory..."
+echo -e "${BLUE}Creating installation directory...${NC}"
 mkdir -p "$INSTALL_DIR"
-cp -r . "$INSTALL_DIR"
+
+# Copy files with error checking
+cp -r . "$INSTALL_DIR" || {
+    echo -e "${RED}Failed to copy files to $INSTALL_DIR${NC}"
+    exit 1
+}
+
+# Set proper ownership and permissions
 chown -R www-data:www-data "$INSTALL_DIR"
 chmod -R 755 "$INSTALL_DIR"
-chmod 664 "$INSTALL_DIR/nexus.sqlite" 2>/dev/null || touch "$INSTALL_DIR/nexus.sqlite" && chown www-data:www-data "$INSTALL_DIR/nexus.sqlite" && chmod 664 "$INSTALL_DIR/nexus.sqlite"
-echo "✓ Directory permissions configured"
+
+# Handle database file
+DB_FILE="$INSTALL_DIR/nexus.sqlite"
+if [ ! -f "$DB_FILE" ]; then
+    touch "$DB_FILE"
+fi
+chown www-data:www-data "$DB_FILE"
+chmod 664 "$DB_FILE"
+
+echo -e "${GREEN}✓ Directory permissions configured${NC}"
 echo ""
 
 # Configure Nginx
-echo "Configuring Nginx..."
+echo -e "${BLUE}Configuring Nginx...${NC}"
 NGINX_CONFIG="/etc/nginx/sites-available/nexus"
 
 cat > "$NGINX_CONFIG" << EOF
@@ -142,84 +167,95 @@ server {
 }
 EOF
 
-echo "✓ Nginx configuration created"
+echo -e "${GREEN}✓ Nginx configuration created${NC}"
 echo ""
 
 # Disable default site and enable nexus site
-echo "Enabling Nexus site..."
+echo -e "${BLUE}Enabling Nexus site...${NC}"
 rm -f /etc/nginx/sites-enabled/default
-ln -sf "$NGINX_CONFIG" /etc/nginx/sites-enabled/
-echo "✓ Site enabled"
+ln -sf "$NGINX_CONFIG" /etc/nginx/sites-enabled/ || {
+    echo -e "${RED}Failed to enable Nexus site${NC}"
+    exit 1
+}
+echo -e "${GREEN}✓ Site enabled${NC}"
 echo ""
 
 # Test Nginx configuration
-echo "Testing Nginx configuration..."
-nginx -t
-echo "✓ Nginx configuration test passed"
+echo -e "${BLUE}Testing Nginx configuration...${NC}"
+if nginx -t; then
+    echo -e "${GREEN}✓ Nginx configuration test passed${NC}"
+else
+    echo -e "${RED}✗ Nginx configuration test failed${NC}"
+    exit 1
+fi
 echo ""
 
 # Reload Nginx
-echo "Reloading Nginx..."
-systemctl reload nginx
-echo "✓ Nginx reloaded"
+echo -e "${BLUE}Reloading Nginx...${NC}"
+systemctl reload nginx || {
+    echo -e "${RED}Failed to reload Nginx${NC}"
+    exit 1
+}
+echo -e "${GREEN}✓ Nginx reloaded${NC}"
 echo ""
 
 # Final checks
-echo "Performing final checks..."
+echo -e "${BLUE}Performing final checks...${NC}"
 
 # Check if services are running
 if systemctl is-active --quiet nginx; then
-    echo "✓ Nginx is running"
+    echo -e "${GREEN}✓ Nginx is running${NC}"
 else
-    echo "✗ Nginx is not running"
+    echo -e "${RED}✗ Nginx is not running${NC}"
     exit 1
 fi
 
 if systemctl is-active --quiet php8.3-fpm; then
-    echo "✓ PHP-FPM is running"
+    echo -e "${GREEN}✓ PHP-FPM is running${NC}"
 else
-    echo "✗ PHP-FPM is not running"
+    echo -e "${RED}✗ PHP-FPM is not running${NC}"
     exit 1
 fi
 
 if systemctl is-active --quiet docker; then
-    echo "✓ Docker is running"
+    echo -e "${GREEN}✓ Docker is running${NC}"
 else
-    echo "✗ Docker is not running"
+    echo -e "${RED}✗ Docker is not running${NC}"
     exit 1
 fi
 
 # Check if www-data can run docker commands
+echo -e "${BLUE}Checking Docker permissions for www-data...${NC}"
 if sudo -u www-data docker ps >/dev/null 2>&1; then
-    echo "✓ www-data can execute Docker commands"
+    echo -e "${GREEN}✓ www-data can execute Docker commands${NC}"
 else
-    echo "✗ www-data cannot execute Docker commands"
-    echo "  You may need to reboot the system for group changes to take effect"
+    echo -e "${YELLOW}⚠ www-data cannot execute Docker commands${NC}"
+    echo -e "${YELLOW}  You may need to reboot the system for group changes to take effect${NC}"
 fi
 
 echo ""
-echo "========================================="
+echo -e "${GREEN}========================================="
 echo "  INSTALLATION COMPLETE!"
 echo "========================================="
+echo -e "${NC}"
+echo -e "${GREEN}Nexus Panel has been successfully installed!${NC}"
 echo ""
-echo "Nexus Panel has been successfully installed!"
+echo -e "${BLUE}Access your panel at:${NC} http://$(hostname -I | awk '{print $1}')"
 echo ""
-echo "Access your panel at: http://$(hostname -I | awk '{print $1}')"
-echo ""
-echo "Default Admin Credentials:"
+echo -e "${YELLOW}Default Admin Credentials:${NC}"
 echo "  Username: admin"
 echo "  Password: admin123"
 echo ""
-echo "Important Notes:"
+echo -e "${YELLOW}Important Notes:${NC}"
 echo "• Change the default admin password after first login"
 echo "• Ensure your firewall allows traffic on port 80"
 echo "• Make sure Docker containers exist before assigning them to users"
 echo "• The database file is located at: $INSTALL_DIR/nexus.sqlite"
 echo ""
-echo "To start using Nexus Panel:"
+echo -e "${BLUE}To start using Nexus Panel:${NC}"
 echo "1. Visit the URL above in your browser"
 echo "2. Login with the default admin credentials"
 echo "3. Create users and assign Docker containers"
 echo ""
-echo "Need help? Check the GitHub repository for documentation."
+echo -e "${BLUE}Need help? Check the GitHub repository for documentation.${NC}"
 echo ""
