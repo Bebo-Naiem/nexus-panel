@@ -121,6 +121,14 @@ install_dependencies() {
     apt update
     
     # Install packages specific to Ubuntu 24.04
+    # First, make sure Apache is not installed or remove it if it is
+    if dpkg -l | grep -q apache2; then
+        echo -e "${YELLOW}Removing Apache2 to avoid conflicts with Nginx...${NC}"
+        systemctl stop apache2 2>/dev/null || true
+        systemctl disable apache2 2>/dev/null || true
+        apt remove -y apache2 apache2-utils apache2-bin apache2-data 2>/dev/null || true
+    fi
+    
     apt install -y \
         git \
         php8.3 \
@@ -128,9 +136,10 @@ install_dependencies() {
         php8.3-curl \
         php8.3-mbstring \
         php8.3-xml \
+        php8.3-fpm \
+        nginx \
         docker.io \
         docker-compose-v2 \
-        nginx \
         ca-certificates \
         curl \
         gnupg \
@@ -267,6 +276,11 @@ server {
     add_header X-XSS-Protection "1; mode=block" always;
     add_header X-Content-Type-Options "nosniff" always;
 
+    # Ensure the root location serves index.php by default
+    location = / {
+        try_files /index.php /index.php;
+    }
+
     location / {
         try_files \$uri \$uri/ /index.php?\$query_string;
     }
@@ -286,11 +300,17 @@ server {
     }
     
     # Deny access to sensitive files
-    location ~ \\.(env|sqlite|log)$ {
+    location ~ \\\.(env|sqlite|log)$ {
         deny all;
     }
 }
 EOF
+    
+    # Disable default Nginx site to avoid conflicts
+    if [ -f /etc/nginx/sites-enabled/default ]; then
+        rm -f /etc/nginx/sites-enabled/default
+        echo -e "${YELLOW}Disabled default Nginx site to avoid conflicts${NC}"
+    fi
     
     # Enable the site
     ln -sf "$NGINX_CONFIG" "$NGINX_LINK"
