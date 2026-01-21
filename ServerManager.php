@@ -20,7 +20,7 @@ class ServerManager {
     /**
      * Create a new server/container
      */
-    public function createServer($userId, $name, $image, $settings = []) {
+    public function createServer($userId, $name, $image, $eggId, $settings = []) {
         // Check if user can create more servers
         $userServerCount = $this->getUserServerCount($userId);
         if ($userServerCount >= Config::MAX_SERVERS_PER_USER) {
@@ -55,14 +55,15 @@ class ServerManager {
             
             // Store server in database
             $stmt = $this->pdo->prepare("
-                INSERT INTO servers (name, container_id, user_id, status, description, memory_limit, cpu_limit, disk_limit) 
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO servers (name, container_id, user_id, egg_id, status, description, memory_limit, cpu_limit, disk_limit) 
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             ");
             $description = $settings['description'] ?? '';
             $stmt->execute([
                 $name, 
                 $result['container_id'], 
                 $userId, 
+                $eggId,
                 'stopped',
                 $description,
                 $settings['memory'] ?? Config::DEFAULT_MEMORY,

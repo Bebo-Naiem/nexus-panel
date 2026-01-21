@@ -501,68 +501,21 @@ function handleCreateServer() {
         }
     }
     
-    // Create server record first
-    $stmt = $pdo->prepare(
-        "INSERT INTO servers (name, container_id, user_id, egg_id, description, memory_limit, cpu_limit, disk_limit) 
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
-    );
-    
-    // Generate temporary container ID (will be replaced by actual container ID)
-    $tempContainerId = 'temp_' . uniqid();
-    
-    $stmt->execute([
-        $name,
-        $tempContainerId,
-        $ownerId,
-        $eggId,
-        $description,
-        $memory,
-        $cpuLimit,
-        $diskSpace
-    ]);
-    
-    $serverId = $pdo->lastInsertId();
-    
-    // Store environment variables
-    if (!empty($environment)) {
-        $stmt = $pdo->prepare("INSERT INTO server_variables (server_id, variable_key, variable_value) VALUES (?, ?, ?)");
-        foreach ($environment as $key => $value) {
-            $stmt->execute([$serverId, $key, $value]);
-        }
-    }
-    
-    // Store port mappings
-    if (!empty($ports)) {
-        $stmt = $pdo->prepare("INSERT INTO server_allocations (server_id, ip_address, port) VALUES (?, ?, ?)");
-        foreach ($ports as $hostPort => $containerPort) {
-            $stmt->execute([$serverId, '0.0.0.0', $hostPort]);
-        }
-    }
-    
-    // Create actual Docker container
+    // Create actual Docker container using ServerManager
     $serverManager = new ServerManager($pdo);
     $settings = [
-        'environment' => $environment,
-        'ports' => $ports,
-        'memory' => $memory . 'm',
-        'cpu_limit' => $cpuLimit
+        'description' => $description,
+        'environment' => $_POST['environment'] ?? '[]',
+        'ports' => $_POST['ports'] ?? '[]',
+        'memory' => $memory,
+        'cpu_limit' => $cpuLimit,
+        'disk_space' => $diskSpace
     ];
     
     try {
-        $result = $serverManager->createServer($ownerId, $name, $image, $settings);
-        
-        if ($result['success']) {
-            // Update container ID in database
-            $stmt = $pdo->prepare("UPDATE servers SET container_id = ? WHERE id = ?");
-            $stmt->execute([$result['container_id'], $serverId]);
-        }
-        
+        $result = $serverManager->createServer($ownerId, $name, $image, $eggId, $settings);
         return $result;
     } catch (Exception $e) {
-        // Clean up database entry if container creation fails
-        $stmt = $pdo->prepare("DELETE FROM servers WHERE id = ?");
-        $stmt->execute([$serverId]);
-        
         throw new Exception('Failed to create container: ' . $e->getMessage());
     }
 }
